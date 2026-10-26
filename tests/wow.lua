@@ -88,7 +88,7 @@ function methods:IsForbidden()return self.forbidden==true end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
 function methods:ClearFocus()self.focus=false end
-for _,name in ipairs({'SetFrameStrata','EnableMouse','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetTextColor'})do methods[name]=function()end end
+for _,name in ipairs({'SetFrameStrata','EnableMouse','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV','SetTextColor'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)
 GameFontNormal=object('Font');GameTooltipText=object('Font')
 ColorPickerFrame=object('Frame');ColorPickerFrame:Hide()

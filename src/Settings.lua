@@ -21,6 +21,62 @@ local function fieldValid(value, field)
     end
     return false
 end
+local function put(values,path,value)
+    local keys={};for key in path:gmatch('[^.]+')do keys[#keys+1]=key end
+    for index=1,#keys-1 do local key=keys[index];values[key]=values[key] or {};values=values[key]end
+    values[keys[#keys]]=value
+end
+-- Default storage is deliberately small. Existing databases keep their migration adapters.
+local function profileAdapter(global)
+    local function defaults(fields)
+        local values={};for path,field in pairs(fields)do put(values,path,I.copy(field.default))end;return values
+    end
+    local function result(db,readOnly)
+        local names={};for name in pairs(db.profiles)do names[#names+1]=name end;table.sort(names)
+        return {state={values=I.copy(db.profiles[db.active]),activeProfile=db.active,readOnly=readOnly==true,
+            profiles={names=names,operations={switch=true,duplicate=true,copy=true,reset=true}},database=db},
+            saved=not readOnly and {[global]=db} or nil}
+    end
+    local function nameValid(name)
+        return type(name)=='string' and #name>0 and #name<=48 and name:match('^%s*(.-)%s*$')==name and not name:find('[%c|]')
+    end
+    local adapter={}
+    function adapter:Restore(saved,fields)
+        local empty={version=1,active='Default',profiles={Default=defaults(fields)}}
+        local db=saved[global]
+        if db==nil then return true,result(empty)end
+        if not I.plain(db) or db.version~=1 then return true,result(empty,true)end
+        if not I.plain(db.profiles) or not nameValid(db.active) or not I.plain(db.profiles[db.active]) then return false,I.error('invalid','Malformed profile database')end
+        local count=0
+        for name,values in pairs(db.profiles)do
+            count=count+1
+            if count>32 or not nameValid(name) or not I.plain(values) then return false,I.error('invalid','Malformed profile')end
+            for path,field in pairs(fields)do
+                if I.get(values,path)==nil then put(values,path,I.copy(field.default))end
+                if not fieldValid(I.get(values,path),field) then return false,I.error('invalid','Invalid saved field: '..path)end
+            end
+        end
+        return true,result(db)
+    end
+    function adapter:Prepare(state,operation,fields)
+        local db=state.database;local name=operation.name;local kind=operation.kind
+        if kind=='set' then put(db.profiles[db.active],operation.path,I.copy(operation.value))
+        elseif kind=='patch' then for path,value in pairs(operation.values)do put(db.profiles[db.active],path,I.copy(value))end
+        elseif kind=='reset' then db.profiles[db.active]=defaults(fields)
+        elseif kind=='switch' or kind=='copy' then
+            if not db.profiles[name] then return false,I.error('notFound','Profile not found')end
+            if kind=='switch' then db.active=name else db.profiles[db.active]=I.copy(db.profiles[name])end
+        elseif kind=='duplicate' then
+            if not nameValid(name) then return false,I.error('invalid','Use a profile name of 1–48 characters without control characters or pipes')end
+            if db.profiles[name] then return false,I.error('exists','Profile already exists')end
+            local count=0;for _ in pairs(db.profiles)do count=count+1 end
+            if count>=32 then return false,I.error('limit','Profile limit reached (32)')end
+            db.profiles[name]=I.copy(db.profiles[db.active]);db.active=name
+        else return false,I.error('unsupported')end
+        return true,result(db)
+    end
+    return adapter
+end
 SND._install[#SND._install + 1] = function(app)
     local spec, current, store, listeners = nil, nil, nil, {}
     local function validate(state)
@@ -56,7 +112,13 @@ SND._install[#SND._install + 1] = function(app)
     end
     function app:Settings(declaration)
         I.check(not spec and not self._ready and not self._disposed, 'declare settings once before readiness')
-        I.check(I.plain(declaration) and I.plain(declaration.adapter), 'settings declaration and adapter must be plain tables')
+        I.check(I.plain(declaration), 'settings declaration must be a plain table')
+        declaration=I.definition(declaration)
+        if declaration.adapter==nil then
+            I.check(I.array(declaration.savedVariables,'savedVariables',true)==1,'default profiles require one saved global')
+            declaration.adapter=profileAdapter(declaration.savedVariables[1])
+        end
+        I.check(I.plain(declaration.adapter), 'settings adapter must be a plain table')
         I.check(type(declaration.adapter.Restore)=='function' and type(declaration.adapter.Prepare)=='function', 'settings adapter requires Restore and Prepare')
         local candidate = { adapter=I.definition(declaration.adapter), fields=I.copy(declaration.fields), savedVariables=I.copy(declaration.savedVariables) }
         I.check(I.plain(candidate.fields), 'fields must be a plain table')
@@ -66,6 +128,7 @@ SND._install[#SND._install + 1] = function(app)
         for path, field in pairs(candidate.fields) do
             I.check(type(path)=='string' and path:match('^[%w_]+[.%w_]*$') and not path:find('..',1,true) and path:sub(-1)~='.', 'invalid setting path')
             I.check(I.plain(field) and types[field.type], 'invalid field declaration: '..path)
+            I.check(field.label==nil or type(field.label)=='string','field label must be a string')
             for _, key in ipairs({'min','max','maxLength'}) do I.check(field[key]==nil or V.Number(field[key]), 'field bounds must be finite numbers') end
             I.check(not field.min or not field.max or field.min<=field.max, 'field min exceeds max')
             I.check(field.maxLength==nil or (field.maxLength>=0 and field.maxLength==math.floor(field.maxLength)), 'maxLength must be a nonnegative integer')
@@ -123,7 +186,7 @@ SND._install[#SND._install + 1] = function(app)
         for path in pairs(spec.fields) do if not I.equal(I.get(current.values,path), I.get(candidate.state.values,path)) then keys[path] = true end end
         local profileChanged = current.activeProfile ~= candidate.state.activeProfile or operation.kind == 'bind'
         -- Candidate is fully valid before any editor cleanup or publication.
-        if app._panel then I.lock(app,function()app._panel:_cancelEditors(operation.kind == 'set')end) end
+        if app._panel then I.lock(app,function()app._panel:_cancelEditors((operation.kind == 'set' or operation.kind == 'patch'))end) end
         publish(candidate.state, candidate.saved); store._revision = store._revision + 1
         local change = { revision = store._revision, reason = operation.kind, keys = keys, profileChanged = profileChanged }
         function change:Touches(...) for i=1,select('#',...) do if self.keys[select(i,...)] then return true end end; return false end
@@ -145,6 +208,17 @@ SND._install[#SND._install + 1] = function(app)
         local ok, valid = pcall(fieldValid, value, spec.fields[path])
         if not ok or not valid then return false, I.error('invalid') end
         return commit({ kind='set', path=path, value=value }, revision)
+    end
+    function app:SetMany(values,revision)
+        I.check(I.plain(values),'settings patch must be a plain path/value map')
+        I.check(I.revision(revision),'expectedRevision must be a nonnegative integer')
+        for path,value in pairs(values)do
+            I.check(type(path)=='string' and path~='','setting path must be a nonempty string')
+            if not spec or not spec.fields[path] then return false,I.error('unknownField')end
+            local ok,valid=pcall(fieldValid,value,spec.fields[path])
+            if not ok or not valid then return false,I.error('invalid')end
+        end
+        return commit({kind='patch',values=values},revision)
     end
     local profiles = {}; app.profiles = profiles
     function profiles:List() return current and I.copy((current.profiles or {}).names or {}) or {} end

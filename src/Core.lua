@@ -1,6 +1,6 @@
 local _, ns = ...
 assert(type(ns) == "table" and ns.SomethingNeedDoing == nil, "SND must load once into the consumer namespace")
-local SND = { VERSION = "0.3.0", Values = {}, Pages = {}, _install = {} }
+local SND = { VERSION = "0.4.0", Values = {}, Pages = {}, _install = {} }
 ns.SomethingNeedDoing = SND
 local I = {}; SND._ = I
 local V = SND.Values

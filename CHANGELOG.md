@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Add default profile storage and generated options, atomic settings patches, and Modern/WoW Forever themes for options and custom views.
+- Separate typography from semantic colors; propagate settled appearance changes through scoped observers. `fonts:Apply` now preserves explicit text color.
+
 ## 0.3.0
 
 - Deliver scoped logout callbacks before disposal, once, while committed settings are readable. Callback and panel-close errors cannot prevent runtime cancellation.

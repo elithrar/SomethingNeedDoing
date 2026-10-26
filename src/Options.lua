@@ -3,8 +3,20 @@ local SND = ns.SomethingNeedDoing; local I = SND._
 function SND.Pages.Profiles() return { id='profiles', label='Profiles', _profiles=true } end
 SND._install[#SND._install + 1] = function(app)
     function app:Options(spec)
+        if spec==nil then spec={}end
         I.check(not self._panel and not self._disposed and I.plain(spec), 'Options requires a plain declaration on a live app')
         spec=I.definition(spec)
+        if spec.pages==nil then
+            local controls,paths={},{}
+            for path in pairs(app._settingsFields or {})do paths[#paths+1]=path end;table.sort(paths)
+            for _,path in ipairs(paths)do
+                local field=app._settingsFields[path]
+                local c={key=path,label=field.label or path,type=({boolean='checkbox',integer='number',number='number',string='text',enum='select',font='font',color='color'})[field.type]}
+                if field.type=='enum' then c.choices={};for _,value in ipairs(field.values)do c.choices[#c.choices+1]={value=value,label=tostring(value)}end end
+                controls[#controls+1]=c
+            end
+            spec.pages={{id='settings',label='Settings',sections={{title='Settings',controls=controls}}},SND.Pages.Profiles()}
+        end
         I.array(spec.pages, 'pages', true)
         I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
         local pageIDs={}
@@ -49,13 +61,14 @@ SND._install[#SND._install + 1] = function(app)
             if not panel._pool[id] then panel._pool[id]=CreateFrame(kind,nil,parent,template) end
             return panel._pool[id]
         end
+        local function requireResource(ok,err)I.check(ok,err and err.message or 'UI resource unavailable')end
         local function text(id,parent,value,role)
             local label=panel._texts[id]
             if not label then label=parent:CreateFontString(nil,'OVERLAY','GameTooltipText');panel._texts[id]=label end
-            app.fonts:Apply(label,role or 'control');label:SetText(value or '');label:SetJustifyH('LEFT');label:Show();return label
+            requireResource(app.fonts:Apply(label,role or 'control'));requireResource(app.ui:Color(label,role=='heading' and 'accent' or role=='muted' and 'muted' or 'text'));label:SetText(value or '');label:SetJustifyH('LEFT');label:Show();return label
         end
         local function button(id,parent,label,action)
-            local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(140,26);app.ui:Style(b,'button')
+            local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(140,26);requireResource(app.ui:Style(b,'button'))
             b.text=text(id..':text',b,label);b.text:ClearAllPoints();b.text:SetPoint('CENTER');b:SetScript('OnClick',action);return b
         end
         local function report(ok,err) if not ok then app.log:Warn('Options action failed',{code=err and err.code or 'unknown'}) end end
@@ -113,9 +126,29 @@ SND._install[#SND._install + 1] = function(app)
             for _, menu in pairs(self._menus) do if menu.IsMenuOpen and menu:IsMenuOpen() then return true end end
             return false
         end
+        local function caption(dropdown,value)
+            local label=dropdown.Text;if not label or dropdown._captioning then return end
+            dropdown._captioning=true
+            local full=tostring(value or '')
+            dropdown._fullCaption=full
+            requireResource(app.fonts:Apply(label,'control'));requireResource(app.ui:Color(label,'text'))
+            local available=math.max(1,dropdown:GetWidth()-32)
+            label:SetText(full)
+            local function width()return label.GetUnboundedStringWidth and label:GetUnboundedStringWidth() or label:GetStringWidth()end
+            local shortened=full
+            while width()>available and #shortened>0 do
+                local last=#shortened
+                while last>1 and shortened:byte(last)>=128 and shortened:byte(last)<192 do last=last-1 end
+                shortened=shortened:sub(1,last-1);label:SetText(shortened..'...')
+            end
+            dropdown._truncated=shortened~=full
+            label:ClearAllPoints();label:SetPoint('CENTER',dropdown,'CENTER',-4,0);label:SetWidth(available);label:SetHeight(dropdown:GetHeight());label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE');label:SetWordWrap(false)
+            dropdown._captioning=nil
+        end
         local function dropdown(id,parent,entries,get,set)
             local d=frame(id,'DropdownButton',parent,'WowStyle1DropdownTemplate');panel._menus[id]=d;d:SetSize(230,26)
-            if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu');app.fonts:Apply(panel._menuFont,'menu') end
+            if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu')end
+            requireResource(app.fonts:Apply(panel._menuFont,'menu'))
             d:SetupMenu(function(_,root)
                 root:SetScrollMode(240)
                 root:AddMenuReleasedCallback(function()
@@ -132,7 +165,22 @@ SND._install[#SND._install + 1] = function(app)
                     row:AddInitializer(function(native) if native.fontString then native.fontString:SetFontObject(panel._menuFont) end end)
                 end
             end)
-            local selected=get();d:SetDefaultText(selected==nil and 'Choose' or tostring(selected));return d
+            if d.Text and not d._captionHooks then
+                local owner=app:Scope()
+                local ok,err=owner:PostHook(d.Text,'SetText',function(_,value)caption(d,value)end)
+                if not ok then owner:Cancel();error(err.message)end
+                local function hideTip()if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner()==d then GameTooltip:Hide()end end
+                for event,fn in pairs({OnEnter=function()
+                    if d._truncated and GameTooltip then GameTooltip:SetOwner(d,'ANCHOR_RIGHT');GameTooltip:SetText(d._fullCaption,nil,nil,nil,nil,true);GameTooltip:Show()end
+                end,OnLeave=hideTip,OnHide=hideTip})do
+                    local attached,failure=owner:HookScript(d,event,fn);if not attached then owner:Cancel();error(failure.message)end
+                end
+                d._captionHooks=owner
+            end
+            local selected=get();local label=selected==nil and 'Choose' or tostring(selected)
+            local offered=type(entries)=='function' and entries() or entries;choices(offered)
+            for _,entry in ipairs(offered)do if I.equal(entry.value,selected)then label=entry.label;break end end
+            d:SetDefaultText(label);caption(d,label);return d
         end
         local function control(id,parent,c,width)
             local kind=c.type;local widget,label,height
@@ -149,14 +197,14 @@ SND._install[#SND._install + 1] = function(app)
             elseif kind=='button' then
                 widget=button(id,parent,c.label,function()I.call(app,c.action,app)end);height=34
             elseif kind=='checkbox' then
-                widget=frame(id,'CheckButton',parent,'UICheckButtonTemplate');widget:SetSize(24,24);widget:SetChecked(app:Get(c.key))
+                widget=frame(id,'CheckButton',parent,'UICheckButtonTemplate');widget:SetSize(24,24);if widget.Text then widget.Text:Hide()end;widget:SetChecked(app:Get(c.key))
                 label=text(id..':label',parent,c.label);label:SetWidth(width-32);widget:SetScript('OnClick',function(b)write(b:GetChecked()==true)end);height=math.max(30,label:GetStringHeight()+8)
             elseif kind=='select' or kind=='font' then
                 widget=dropdown(id,parent,kind=='font' and function()return app.fonts:Entries()end or c.choices or {},function()return app:Get(c.key)end,write)
                 label=text(id..':label',parent,c.label);height=56
             elseif kind=='text' or kind=='number' then
                 widget=frame(id,'EditBox',parent,'InputBoxTemplate');widget:SetSize(math.min(width,230),26);widget:SetAutoFocus(false)
-                widget:SetText(tostring(app:Get(c.key)));app.fonts:Apply(widget,'control')
+                widget:SetText(tostring(app:Get(c.key)));requireResource(app.fonts:Apply(widget,'control'))
                 widget:SetScript('OnEnterPressed',function(e)write(kind=='number' and tonumber(e:GetText()) or e:GetText());e:ClearFocus();panel:Refresh()end)
                 widget:SetScript('OnEscapePressed',function(e)e:ClearFocus();panel:Refresh()end)
                 label=text(id..':label',parent,c.label);height=56
@@ -186,13 +234,16 @@ SND._install[#SND._install + 1] = function(app)
             local f=frame('shell','Frame',UIParent,'BackdropTemplate');self.frame=f;f:Hide()
             f:SetSize(spec.width or 640,spec.height or 500);f:SetPoint('CENTER');f:SetFrameStrata('DIALOG');f:EnableMouse(true);f:SetMovable(true);f:RegisterForDrag('LeftButton')
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
-            f:SetScript('OnHide',function()self:_deactivate()end);app.ui:Style(f,'dialog')
+            f:SetScript('OnHide',function()self:_deactivate()end);requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading');title:SetPoint('TOPLEFT',16,-16)
             local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-30,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
             local bar=frame('scrollbar','Slider',f,'UIPanelScrollBarTemplate');self.bar=bar;bar:SetPoint('TOPRIGHT',-10,-90);bar:SetPoint('BOTTOMRIGHT',-10,32);bar:SetWidth(16);bar:SetValueStep(20)
-            bar:SetScript('OnValueChanged',function(_,value)scroll:SetVerticalScroll(value);self._offsets[self._page]=value end)
+            bar:SetScript('OnValueChanged',function(_,value)
+                if not self._refreshing and value~=(self._offsets[self._page] or 0)then self:_cancelEditors()end
+                scroll:SetVerticalScroll(value);self._offsets[self._page]=value
+            end)
             scroll:EnableMouseWheel(true);scroll:SetScript('OnMouseWheel',function(_,delta)bar:SetValue(math.max(0,math.min(self._maximum or 0,(self._offsets[self._page] or 0)-delta*30)))end)
             for i,page in ipairs(self._pages) do
                 local b=button('tab:'..page.id,f,page.label or page.id,function()self:SelectPage(page.id)end)
@@ -212,7 +263,7 @@ SND._install[#SND._install + 1] = function(app)
                 menu:ClearAllPoints();menu:SetPoint('TOPLEFT',0,-y);menu:Show();menu:SetEnabled(not caps.readOnly);y=y+36
             end
             if operations.duplicate then
-                local input=frame('profile-name','EditBox',parent,'InputBoxTemplate');input:SetSize(220,26);input:SetAutoFocus(false);input:SetPoint('TOPLEFT',0,-y);input:Show()
+                local input=frame('profile-name','EditBox',parent,'InputBoxTemplate');input:SetSize(220,26);input:SetAutoFocus(false);requireResource(app.fonts:Apply(input,'control'));requireResource(app.ui:Color(input,'text'));input:SetPoint('TOPLEFT',0,-y);input:Show()
                 local add=button('profile-add',parent,'Duplicate',function()report(app.profiles:Duplicate(input:GetText()))end);add:SetPoint('TOPLEFT',232,-y);add:Show();add:SetEnabled(not caps.readOnly);y=y+36
             end
             if operations.copy then
@@ -277,8 +328,13 @@ SND._install[#SND._install + 1] = function(app)
             if pageID then self._page=pageID end
             if not self._built then local ok,err=pcall(self._build,self);if not ok then self:Close();return false,I.error('build',err) end end
             self._view=app:Scope('options-page');self.frame:Show()
-            if app._settingsStore then self._view:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self:Refresh()end) end
-            return self:Refresh()
+            local opened,failure=self:Refresh();if not opened then return false,failure end
+            local owner=self._view
+            owner:Watch(app:SelectAppearance(function(value)return value end),function()self:Refresh()end)
+            if self._view~=owner then return false,I.error('build','Initial appearance refresh failed')end
+            if app._settingsStore then owner:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self:Refresh()end) end
+            if self._view~=owner then return false,I.error('build','Initial settings refresh failed')end
+            return true
         end
         function panel:Close() self._confirm=nil;self:_deactivate();if self.frame then self.frame:Hide() end;return true end
         function panel:IsShown() return self.frame~=nil and self.frame:IsShown() end
