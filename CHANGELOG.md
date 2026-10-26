@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Refine agent guidance and consumer discovery; include documentation, examples and verification tooling in the source package. No public API changes.
+
 ## 0.4.0
 
 - Add default profile storage and generated options, atomic settings patches, and Modern/WoW Forever themes for options and custom views.
