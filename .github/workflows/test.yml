@@ -12,6 +12,6 @@ jobs:
       - name: Check metadata and documentation
         run: python3 tools/check.py
       - name: Compile Lua sources
-        run: find src tests examples exercises -name '*.lua' -exec luac5.1 -p {} +
+        run: find src tests examples -name '*.lua' -exec luac5.1 -p {} +
       - name: Run focused contracts
         run: lua5.1 tests/run.lua

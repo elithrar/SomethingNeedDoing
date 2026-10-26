@@ -19,14 +19,14 @@ add-on's behavior in the add-on. SND grew out of
 [AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
 consumers with enough shared plumbing to justify a small library.
 
-Version **0.2.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
+Version **0.3.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
 required third-party dependencies. LibSharedMedia is used when available.
 
 ## Contents
 
 - [Installation](#installation)
 - [Examples](#examples)
-- [API](#api)
+- [API reference](API.md)
 - [Design Notes](#design-notes)
 - [Testing](#testing)
 - [Contributing](#contributing)
@@ -54,6 +54,9 @@ SND separately, and one add-on updating its copy doesn't update another's.
 order. It's metadata: you don't need Node.js, npm or LuaRocks to use SND in WoW.
 
 ## Examples
+
+These examples cover common uses. For the full structured API reference, see
+[API.md](API.md).
 
 ### An options panel
 
@@ -88,7 +91,11 @@ local options = app:Options({
     }},
 })
 
-app:Slash("/youraddon", function() options:Toggle() end)
+local registered, err = app:Slash("/youraddon", function()
+    local opened, failure = options:Toggle()
+    if not opened then app.log:Warn(failure.message) end
+end)
+if not registered then app.log:Warn(err.message) end
 ```
 
 The controls read their bounds and defaults from the field declarations. A
@@ -159,10 +166,15 @@ Use a scope when several callbacks belong to the same view or operation:
 
 ```lua
 local preview = app:Scope("reward-preview")
-preview:Event("GET_ITEM_INFO_RECEIVED", function(itemID, success)
+local subscribed, err = preview:Event("GET_ITEM_INFO_RECEIVED", function(itemID, success)
     if success then ns.Preview:RefreshItem(itemID) end
 end)
-preview:After(0.15, "refresh", function() ns.Preview:Refresh() end)
+if not subscribed then app.log:Warn(err.message) end
+
+local scheduled, timerOrError = preview:After(0.15, "refresh", function()
+    ns.Preview:Refresh()
+end)
+if not scheduled then app.log:Warn(timerOrError.message) end
 
 -- Closing the preview cancels its subscriptions and pending work.
 -- Call preview:Cancel() from the preview's close handler.
@@ -172,47 +184,6 @@ Scheduling another `After` with the same key replaces the pending callback.
 Scopes also own recurring timers, additive hooks and guards for external async
 callbacks. Secure hooks can't be removed from WoW; cancellation detaches your
 subscriber from an inert dispatcher.
-
-## API
-
-The [API reference](API.md) covers signatures, errors and lifecycle details.
-The main entry points are:
-
-| Area | API |
-| --- | --- |
-| Bootstrap | `NewAddon`, `OnReady`, `IsReady` |
-| State | `State`, `Read`, `Update`, `Select`, `scope:Watch` |
-| Settings | `Settings`, `Get`, `Set`, `SelectSettings`, profile commands |
-| Options | `Options`, `Open`, `Close`, `SelectPage`; controls bind by `key` |
-| Ownership | `Scope`, `Event`, `PostHook`, `HookScript`, `After`, `Every`, `Guard`, `Cancel` |
-| Presentation | `ui:Style`, `ui:Border`, `fonts:Apply`, `fonts:Measure`, layout helpers |
-| Diagnostics | `Slash`, `log:Debug`, `Info`, `Warn`, `Error` |
-
-Custom options components receive a positioned parent and a scope for the visible
-page. Implement `Refresh`, `Layout(width)` and `Hide`, and reuse your frames when
-the page opens again. You don't need a separate UI binding language.
-
-### Handling errors
-
-Fallible operations use a small Result tuple: `true, value` or `false, error`.
-Commands return `true, nil`; operations that create a timer, hook or layout
-handle return that handle as the second value:
-
-```lua
-local ok, timer = preview:After(0.15, "refresh", function() ns.Preview:Refresh() end)
-if not ok then
-    app.log:Warn(timer.message, { code = timer.code })
-    return
-end
--- timer:Cancel() cancels this operation; preview:Cancel() cancels the whole scope.
-```
-
-Errors have a stable `code` and a diagnostic `message`. Invalid declarations and
-wrong argument shapes raise programmer errors. Async callback exceptions are
-reported through diagnostics and WoW's error handler. Getters and infallible
-registrations keep their direct return values. See the
-[full contract](API.md#result-and-exception-contract) and
-[0.2 migration notes](CHANGELOG.md) before upgrading a 0.1 consumer.
 
 ## Design Notes
 
@@ -250,24 +221,24 @@ With Lua 5.1 and Python 3 installed, run:
 ```sh
 python3 tools/check.py
 lua5.1 tests/run.lua
-lua5.1 exercises/run.lua
+lua5.1 tests/consumers.lua
 ```
 
 The focused contract suite is self-contained. Each test includes a short
-[justification](tests/README.md) explaining the failure it prevents. The metadata
-check catches version, load-order and local documentation-link drift.
+justification explaining the failure it prevents. The metadata check catches
+version, load-order and local documentation-link drift.
 
-The consumer exercise requires sibling checkouts of the three add-ons at the
-revisions in [EXTRACTION-AUDIT.md](EXTRACTION-AUDIT.md). It loads their real domain
-modules and the actual SND runtime, with mock controllers and UI. See
-[STATE-EXERCISES.md](STATE-EXERCISES.md) for the findings and remaining gaps.
+The optional [consumer checks](tests/consumers.lua) require sibling checkouts of
+XPIsland, FindAnUpgrade and AsTheCrowFlies. They load real domain modules with
+mock controllers and UI. They are design evidence, not complete migrations of
+the add-ons' settings or options. Source baselines are recorded beside the checks.
 
 If you're using Python with Lupa instead of a Lua executable, use
-`python tests/run.py` and `python tests/run.py exercises/run.lua`. Both select
+`python tests/run.py` and `python tests/run.py tests/consumers.lua`. Both select
 Lua 5.1 explicitly. CI runs the self-contained suite; it doesn't require access
 to private consumer repositories.
 
-Version 0.2.0 has offline contract and consumer-mock validation. Native rendering,
+Offline contract and consumer-mock checks cover the runtime. Native rendering,
 menu/picker input, combat restrictions and mixed-version coexistence still need
 in-game acceptance on the target client. The mocks aren't migrations of the
 shipping add-ons.

@@ -47,7 +47,7 @@ SND._install[#SND._install + 1] = function(app)
     end
     local applications = setmetatable({}, {__mode='k'})
     local sizes = {heading=16,body=14,muted=14,control=13,menu=13}
-    local media, refreshing
+    local media, refreshing, startFonts
     local downgrade, generation = {}, 0
     local measurements = setmetatable({}, {__mode='k'})
     local function nativeFont()
@@ -62,6 +62,7 @@ SND._install[#SND._install + 1] = function(app)
         if LibStub then local ok, result = pcall(function() return LibStub('LibSharedMedia-3.0', true) end); if ok then return result end end
     end
     function fonts:Entries()
+        startFonts()
         media = getMedia()
         local names, out = { ['Game tooltip']=true, ['Arial']=true, ['Friz Quadrata']=true }, {}
         if media and media.List then for _, name in ipairs(media:List('font') or {}) do names[name] = true end end
@@ -103,6 +104,7 @@ SND._install[#SND._install + 1] = function(app)
     end
     function fonts:Apply(object, role)
         if not sizes[role] or not nativeObject(object) or type(object.SetFont)~='function' or type(object.GetFont)~='function' then return false, I.error('invalid') end
+        startFonts()
         applications[object] = role
         local before=generation
         local ok,err=apply(object,role)
@@ -120,6 +122,7 @@ SND._install[#SND._install + 1] = function(app)
         return cached.width,cached.height
     end
     function fonts:Refresh()
+        startFonts()
         if refreshing then return end
         refreshing = true; media = getMedia()
         for _=1,3 do
@@ -129,26 +132,35 @@ SND._install[#SND._install + 1] = function(app)
         end
         refreshing = nil
     end
-    app:OnReady(function()
-        app:OnSettingsChanged(function(_, change) if change:Touches('font','fontSize') then fonts:Refresh() end end)
-        local connected
-        local function connect()
-            local lib=getMedia()
-            if lib and lib~=connected and lib.RegisterCallback then
-                connected=lib;media=lib
-                local receiver={}
-                function receiver:Changed(_,kind)
-                    if kind=='font' then downgrade={};fonts:Refresh();if app._panel then app._panel:Refresh()end end
+    local fontsRequested = false
+    startFonts = function()
+        I.check(not app._disposed, 'font service is disposed')
+        if fontsRequested then return end
+        fontsRequested = true
+        local function activate()
+            app:OnSettingsChanged(function(_, change) if change:Touches('font','fontSize') then fonts:Refresh() end end)
+            local connected, mediaOwner
+            local function connect()
+                local lib=getMedia()
+                if lib and lib~=connected and lib.RegisterCallback then
+                    local owner=app:Scope()
+                    local receiver={}
+                    receiver.Changed = owner:Guard(function(_,_,kind)
+                        if kind=='font' then downgrade={};fonts:Refresh();if app._panel then app._panel:Refresh()end end
+                    end)
+                    I.handle(owner,function()if lib.UnregisterAllCallbacks then lib.UnregisterAllCallbacks(receiver)end end)
+                    local ok, err = pcall(lib.RegisterCallback,receiver,'LibSharedMedia_Registered','Changed')
+                    if not ok then owner:Cancel();I.report(app,err);return end
+                    if mediaOwner then mediaOwner:Cancel() end
+                    connected=lib;media=lib;mediaOwner=owner
+                    downgrade={};fonts:Refresh()
                 end
-                lib.RegisterCallback(receiver,'LibSharedMedia_Registered','Changed')
-                I.handle(app,function()if lib.UnregisterAllCallbacks then lib.UnregisterAllCallbacks(receiver)end end)
-                downgrade={};fonts:Refresh()
             end
+            connect();app._system:Event('ADDON_LOADED',connect)
+            fonts:Refresh()
         end
-        connect();app._system:Event('ADDON_LOADED',connect)
-        fonts:Refresh()
-    end)
-    local active = {}
+        if app:IsReady() then activate() else app:OnReady(activate) end
+    end
     local function geometry(frame)
         if not safeFrame(frame) or not frame.GetLeft then return end
         local ratio = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
@@ -165,7 +177,7 @@ SND._install[#SND._install + 1] = function(app)
         if not V.Number(margin) or margin<0 then return false, I.error('invalid') end
         local h, dragging = nil, false
         local owner = app:Scope()
-        h = I.handle(app, function() active[h] = nil; owner:Cancel() end)
+        h = I.handle(app, function() owner:Cancel() end)
         function h:Refresh()
             if not self.active or dragging or (frame.IsShown and not frame:IsShown()) then return true end
             if not safeFrame(frame) then return false, I.error('unavailable') end
@@ -183,20 +195,25 @@ SND._install[#SND._install + 1] = function(app)
             end
             return true
         end
-        active[h] = true
-        owner:HookScript(frame,'OnShow',function() h:Refresh() end)
-        owner:HookScript(frame,'OnSizeChanged',function() h:Refresh() end)
-        if anchor then owner:HookScript(anchor,'OnSizeChanged',function() h:Refresh() end) end
-        owner:HookScript(frame,'OnDragStart',function() dragging=true end)
-        owner:HookScript(frame,'OnDragStop',function() dragging=false;h:Refresh() end)
+        local function attach(ok, err)
+            if not ok then h:Cancel();return false,err end
+            return true
+        end
+        for _,event in ipairs({'UI_SCALE_CHANGED','DISPLAY_SIZE_CHANGED'}) do
+            local ok,err=attach(owner:Event(event,function() h:Refresh() end))
+            if not ok then return false,err end
+        end
+        local hooks={{frame,'OnShow',function() h:Refresh() end},
+            {frame,'OnSizeChanged',function() h:Refresh() end},
+            {frame,'OnDragStart',function() dragging=true end},
+            {frame,'OnDragStop',function() dragging=false;h:Refresh() end}}
+        if anchor then hooks[#hooks+1]={anchor,'OnSizeChanged',function() h:Refresh() end} end
+        for _,hook in ipairs(hooks) do
+            local ok,err=attach(owner:HookScript(unpack(hook)))
+            if not ok then return false,err end
+        end
         h:Refresh(); return true, h
     end
     function layout:KeepOnScreen(frame,spec) return track(frame,nil,spec) end
     function layout:PlacePopup(frame,anchor,spec) return track(frame,anchor,spec) end
-    -- Geometry changes are infrequent; no geometry polling in an animation loop.
-    app:OnReady(function()
-        for _, event in ipairs({'UI_SCALE_CHANGED','DISPLAY_SIZE_CHANGED'}) do
-            app._system:Event(event,function() for h in pairs(active) do h:Refresh() end end)
-        end
-    end)
 end

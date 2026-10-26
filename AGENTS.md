@@ -1,70 +1,51 @@
 # Working on SomethingNeedDoing
 
-SND is a vendored WoW microframework. Keep it small enough that a capable engineer can understand the ownership model without a second abstraction layer. Favor judgment and direct implementation over elaborate plans, wrappers, generators, or speculative extensibility.
+SND is a vendored WoW microframework. Prefer direct implementation and clear ownership over wrappers, convenience synonyms or speculative extension points. Use engineering judgment; this file defines durable boundaries, not a step-by-step script.
 
-## Read the authoritative files
+## Authoritative files
 
-- [API.md](API.md) defines the supported public contract, callback timing, persistence boundaries and limitations. Update it with any public behavior change.
-- [package.json](package.json) owns package metadata and the ordered runtime file list; [Embed.xml](Embed.xml) is WoW's load entry point. `tools/check.py` catches version/load-order drift.
-- [examples/Consumer.lua](examples/Consumer.lua) and [examples/SettingsAdapter.lua](examples/SettingsAdapter.lua) are executable usage examples. Prefer linking these over duplicating large examples in documentation.
-- [STATE-EXERCISES.md](STATE-EXERCISES.md) records current consumer evidence and unresolved gaps. [EXTRACTION-AUDIT.md](EXTRACTION-AUDIT.md) is historical source evidence, not permission to copy whole consumer modules into SND.
-- [tests/README.md](tests/README.md) explains why each test exists. Native behavior must be checked against the supported client, not guessed from our mock.
+- [API.md](API.md): public signatures, Result contracts, callback timing and persistence boundaries. Change it with behavior, not ahead of evidence.
+- [package.json](package.json): version, author, license, consumer package files and ordered runtime files. [Embed.xml](Embed.xml) loads those files in WoW; `tools/check.py` checks drift.
+- [examples/Consumer.lua](examples/Consumer.lua) and [examples/SettingsAdapter.lua](examples/SettingsAdapter.lua): executable consumer usage. Prefer improving these to creating more overlapping guides.
+- [tests/run.lua](tests/run.lua): focused contracts, each with its failure-risk justification. [tests/wow.lua](tests/wow.lua) models only native boundaries. [tests/consumers.lua](tests/consumers.lua) optionally loads sibling add-on domain modules; its header records source baselines.
 
-## Find the implementation by responsibility
-
-| File | Owns |
+| File | Responsibility |
 | --- | --- |
-| `src/Core.lua` | Namespace bootstrap, readiness, bounded plain-data copying, errors and private ownership helpers |
-| `src/State.lua` | Explicit transactions, selectors, watch delivery and revision checks |
-| `src/Settings.lua` | Field validation, staged SavedVariables adapters, profile commands and settings projections |
-| `src/Scope.lua` | Events, additive hooks, guards, keyed timers, cancellation and slash commands |
-| `src/UI.lua` | Chrome, fonts, measurements and screen-space geometry |
-| `src/Options.lua` | Pooled shell, bound controls, profile page, transient editors and visible-page scopes |
-| `src/Diagnostics.lua` | Bounded, memory-only diagnostics |
+| `src/Core.lua` | Namespace, readiness, disposal, plain-data copies and private ownership helpers |
+| `src/Scope.lua` | Events, additive hooks, guards, keyed timers and slash commands |
+| `src/State.lua` | Transactions, selectors, revisions and watch delivery |
+| `src/Settings.lua` | Validation, staged SavedVariables adapters and profile commands |
+| `src/UI.lua` | Chrome, demand-activated fonts and owned screen geometry |
+| `src/Options.lua` | Pooled controls, pages, custom components and transient editors |
+| `src/Diagnostics.lua` | Bounded memory-only diagnostics |
 
-`SND._`, app members beginning with `_`, and test fixture internals are private. Consumers must not depend on them. Do not add public escape hatches merely because a test can reach an internal object.
+`SND._`, underscore-prefixed app members and fixture internals are private. Never use them in consumer examples or expose a helper just because a test can access it.
 
-## Stable usage shape
+## API and ownership
 
-The framework is local to the consuming TOC namespace:
+- Every shared interface needs at least two independently useful consumer implementations before stabilization. Two toy tests do not qualify. Use the third add-on to challenge generalization. Lifecycle migrations do not validate production settings/options behavior; label mocks honestly.
+- Before adding any public API, demonstrate why existing events, scopes, Results, selectors or custom components cannot express two concrete uses clearly. Keep gameplay clocks, queries, route graphs, native integration policy and checkpoint policy in consumers.
+- Keep Lua 5.1, the declared client target and the consuming TOC namespace. No process-wide “latest version wins” registry or dependence on another installed add-on.
+- State follows `Update → Select → Watch`: small plain snapshots, pure selectors and scope-owned observers. Cancel hidden views and create a fresh scope on reopening. Preserve consumer request generations for asynchronous identity.
+- Settings have one owner: declare an adapter before readiness, mutate through `app:Set`/profile commands and observe with `SelectSettings`. Never mirror a live profile into a second writable store. Transfer every write path together, including previews, drag commits and profile replacement. TOCs determine account/character persistence; adapters preserve schema and recovery policy.
+- Fallible operations return `true, value` or `false, {code, message}`; commands return nil on success. Check the boolean. Programmer errors raise; callback errors are reported and contained. Never format arbitrary error objects. Validate dense arrays and copy declarations before installing them.
+- Validate before publishing. Failed adapters cannot change live globals; unknown future schemas remain untouched. Reentrant writes fail rather than becoming hidden queued work.
 
-```lua
-local ADDON, ns = ...
-local app = ns.SomethingNeedDoing:NewAddon(ADDON)
-local status = app:State({ message = "Ready" })
-app:OnReady(function()
-    local view = app:Scope("status-view")
-    view:Watch(status:Select(function(value) return value.message end), function(message)
-        app.log:Info(message)
-    end)
-end)
-```
+## Lifecycle and presentation
 
-Follow `Update → Select → Watch`. Update small plain-data snapshots after authoritative domain commands succeed. Selectors are pure projections. Watches belong to scopes; cancel a view scope on hide, and create a fresh one on reopen. Initial watch delivery provides the latest snapshot. Use an optional revision for stale editors; use consumer-owned request generations for async search identity.
+- Readiness means restoration succeeded, not that player identity or world APIs are available. Ordinary callbacks wait for readiness.
+- Scoped logout subscribers run once before disposal and may read committed state. Their failures, recursive delivery or failing panel cleanup must not prevent cancellation. Work scheduled during logout is canceled; WoW controls disk persistence.
+- Unused font/layout services must not install listeners. Passive measurements do not activate media tracking. Pre-ready and late activation must both work; disposed instances cannot acquire new resources.
+- Give external callbacks guarded lifetimes, even when the external API offers unregistering. Partial attachment failure must cancel acquired subscribers and remain retryable. Secure hooks retain inert native dispatchers, never canceled subscriber references.
+- Use ordinary `key` bindings and the existing custom-component parent/scope contract. Reuse frames across opens. Never rebuild menus under input or let stale color/profile/editor callbacks write new settings. Preview values are transient.
+- Do not change protected frames, own Blizzard state, add automatic gameplay retries or collect telemetry.
 
-Settings have one owner: declare their adapter before restoration, write through `app:Set`/profile commands, and observe with `SelectSettings`. Do not mirror profile settings into another mutable State. TOC declarations decide account versus character scope. OnReady means restoration succeeded, not that player identity or world APIs are ready.
+## Verification and repository hygiene
 
-Use `key` bindings for standard options controls. For bespoke content, use a custom component's supplied parent and visible-page scope; reuse frames when its factory is invoked again. Keep world geometry, gameplay algorithms, checkpoint policy, queries and animation clocks in the consumer.
+Run the README commands. Add only the smallest regression that protects a real failure boundary, with its reason beside the test. Do not duplicate this rationale in a separate test catalog. Rerun optional consumer checks for state, settings, scope or component changes when sibling sources exist; otherwise report the missing evidence.
 
-## Preserve these invariants
+Keep source, consumer-facing documentation/examples, package metadata and necessary verification infrastructure. Historical audits and review transcripts belong in PRs or Git history, not permanent parallel specifications. Keep caches, generated archives and scratch work out of source control and verification files out of the consumer package.
 
-- **Every interface needs at least two implementations.** Before stabilizing a shared interface, demonstrate it in two independently useful consumer integrations. Exercise all three add-ons where relevant. Two toy tests are not two integrations.
-- Keep Lua 5.1 and the explicit client target. No dependency on another installed add-on or process-wide “latest version wins” library state.
-- Validate staged state before publication. Failed adapters cannot mutate live globals. Unknown future schemas must remain untouched; restoration may fail explicitly rather than guess.
-- Fallible APIs and persistence adapters return `true, value` / `false, { code, message }`. Commands have a nil success payload. Do not infer failure from the payload, or add wrapper/combinator APIs without two concrete uses. Programmer errors raise; asynchronous callback errors are reported. See API.md for the exact boundary.
-- Validate dense arrays before ipairs; copy declaration tables before installation. Never format arbitrary error objects or rely on shared-reference identity in copied state.
-- Success means committed. Reentrant writes from transactions or notifications fail; schedule intentional follow-up explicitly through the existing scope scheduler.
-- Preserve cancellation during dispatch and release callback references. Secure hooks cannot be unhooked; retain inert dispatchers, not subscribers.
-- Never regenerate an open native menu. Color previews are transient and must not persist; old callbacks cannot target a new profile/editor.
-- No automatic protected-frame changes, domain persistence, cache invalidation, gameplay retries or telemetry. Do not infer ownership of Blizzard frames.
-- No new API until an existing primitive demonstrably cannot express two concrete uses clearly. Prefer one precise operation over several convenience synonyms.
+Keep version, author, description, Apache-2.0 license and load order consistent. Follow the user's current commit/PR authorization; this file adds no release ceremony. Report source inspection, offline checks and in-game observation separately. Passing mocks cannot establish native rendering, input, combat/taint safety or coexistence.
 
-## Verification and completion
-
-Run the commands in README. For a behavior change, add or adjust the smallest test that catches a meaningful failure; state the risk in the test's `why` text. Avoid implementation-mirroring tests, broad snapshots and test count targets. Reuse the existing native-boundary fixture; do not make it silently accept unfamiliar client methods.
-
-For state, settings, scope or component changes, rerun the three-consumer exercise when the pinned sibling repositories are available. If unavailable, report that specifically; do not claim consumer validation from the self-contained suite. For native UI changes, distinguish source evidence and offline checks from actual in-client observation.
-
-Keep author, description, license, version and load order consistent with package metadata. Preserve Apache-2.0 and any third-party notices if code is imported. Avoid unused generated files, prototype runtimes, caches and release archives in source control. Commit according to the current user request; this file does not impose an approval or release ceremony.
-
-Report the concrete behavior changed, relevant checks and material remaining gaps. Do not describe mocks as production migrations or offline tests as proof of native rendering/taint safety.
+When changing a public API—including return values, usage or error handling—update API.md and the affected README.md examples and executable examples in the same change. Update this file where its guidance is affected; keep API details in the user documentation rather than duplicating them here.

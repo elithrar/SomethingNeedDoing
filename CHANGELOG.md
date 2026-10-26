@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Deliver scoped logout callbacks before disposal, once, while committed settings are readable. Callback and panel-close errors cannot prevent runtime cancellation.
+- Activate font tracking on first use; keep measurements passive. Guard media callbacks, recover partial registration and release replaced receivers.
+- Register layout listeners only for active handles and unwind partial attachment failures.
+- Keep the public API unchanged. Consolidate executable consumer checks under tests and remove historical audit reports and duplicate test documentation.
+
+
 ## 0.2.0
 
 Breaking changes from the Lua correctness and developer-experience review:
@@ -21,7 +29,7 @@ Validated fixes:
 - Immediate native event registration failures now return a failed Result, rather than a canceled handle that looked successful.
 - Cleanup errors are reported without interrupting remaining owned cleanup.
 
-Thirteen focused contract tests and the three real-runtime consumer mocks pass under Lua 5.1. See tests/README.md for each test's justification and STATE-EXERCISES.md for the pre-publication API review. Native WoW acceptance remains outstanding.
+Thirteen focused contract tests and the three real-runtime consumer mocks pass under Lua 5.1. Each focused test records its failure-risk justification in tests/run.lua. Native WoW acceptance remains outstanding.
 
 ## 0.1.0
 

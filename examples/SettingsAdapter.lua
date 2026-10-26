@@ -7,6 +7,10 @@ local function put(t,path,value)
     local keys={};for key in path:gmatch('[^.]+')do keys[#keys+1]=key end
     for i=1,#keys-1 do t[keys[i]]=t[keys[i]]or{};t=t[keys[i]]end;t[keys[#keys]]=value
 end
+local function get(t,path)
+    for key in path:gmatch('[^.]+')do if type(t)~='table'then return nil end;t=t[key]end
+    return t
+end
 local Adapter={}
 function Adapter:Restore(saved,fields)
     local defaults={};for path,field in pairs(fields)do put(defaults,path,copy(field.default))end
@@ -15,7 +19,11 @@ function Adapter:Restore(saved,fields)
         return true, {state={values=defaults,readOnly=true,profiles={operations={}}}}
     end
     db=db or {version=1,values=defaults}
-    return true, {state={values=copy(db.values),profiles={operations={reset=true}}},saved={[global]=copy(db)}}
+    if type(db.values)~='table'then return false,{code='invalid',message='Saved settings require a values table'}end
+    db=copy(db)
+    -- New fields get defaults; existing values still pass SND's declared validation.
+    for path,field in pairs(fields)do if get(db.values,path)==nil then put(db.values,path,copy(field.default))end end
+    return true, {state={values=copy(db.values),profiles={operations={reset=true}}},saved={[global]=db}}
 end
 function Adapter:Prepare(state,operation,fields)
     local values=copy(state.values)
