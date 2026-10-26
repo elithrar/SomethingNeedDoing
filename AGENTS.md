@@ -62,4 +62,6 @@ Keep source, consumer-facing documentation/examples, package metadata and necess
 
 Keep version, author, description, Apache-2.0 license and load order consistent. Follow the user's current commit/PR authorization; this file adds no release ceremony. Report source inspection, offline checks and in-game observation separately. Passing mocks cannot establish native rendering, input, combat/taint safety or coexistence.
 
+Release notes use the version entry in CHANGELOG.md: Public API changes first, then Internal improvements. If there are none, put **No public API changes.** under the first heading. For every API addition or change, show before/after usage (or behavior when calls are unchanged), identify breaking changes and explain migration requirements. Keep internal improvements to short, concrete bullets. Use the same entry for GitHub release notes; do not add a parallel release-notes file.
+
 When changing a public API—including return values, usage or error handling—update API.md and the affected README.md examples and executable examples in the same change. Update this file where its guidance is affected; keep API details in the user documentation rather than duplicating them here.
