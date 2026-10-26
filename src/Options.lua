@@ -3,10 +3,47 @@ local SND = ns.SomethingNeedDoing; local I = SND._
 function SND.Pages.Profiles() return { id='profiles', label='Profiles', _profiles=true } end
 SND._install[#SND._install + 1] = function(app)
     function app:Options(spec)
-        assert(not self._panel and type(spec.pages)=='table' and #spec.pages>0,'one options panel with pages required')
+        I.check(not self._panel and not self._disposed and I.plain(spec), 'Options requires a plain declaration on a live app')
+        spec=I.definition(spec)
+        I.array(spec.pages, 'pages', true)
+        I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
+        local pageIDs={}
+        local function choices(entries)
+            I.array(entries,'choices')
+            for _,entry in ipairs(entries)do I.check(I.plain(entry) and type(entry.label)=='string' and entry.value~=nil,'choice requires a label and non-nil value')end
+        end
+        for _,page in ipairs(spec.pages)do
+            I.check(I.plain(page) and type(page.id)=='string' and page.id~='' and not pageIDs[page.id], 'invalid or duplicate page id')
+            pageIDs[page.id]=true
+            I.array(page.sections==nil and {} or page.sections, 'sections')
+            for _,section in ipairs(page.sections or {})do
+                I.check(I.plain(section),'section must be a plain table')
+                I.array(section.controls==nil and {} or section.controls,'controls')
+                local controlIDs={}
+                for index,c in ipairs(section.controls or {})do
+                    I.check(I.plain(c) and ({checkbox=true,slider=true,number=true,text=true,select=true,font=true,color=true,button=true,description=true,custom=true})[c.type], 'invalid control type')
+                    I.check(c.id==nil or (type(c.id)=='string' and c.id~=''), 'control id must be a nonempty string')
+                    local id=c.id or tostring(index);I.check(not controlIDs[id],'duplicate control id');controlIDs[id]=true
+                    for _,key in ipairs({'enabled','visible','preview','action','create'})do I.check(c[key]==nil or type(c[key])=='function', key..' must be a function')end
+                    if c.type=='custom' then I.check(type(c.create)=='function','custom requires create')
+                    elseif c.type=='button' then I.check(type(c.action)=='function','button requires action')
+                    elseif c.type~='description' then
+                        I.check(type(c.key)=='string' and c.key~='', 'bound control requires key')
+                        local field=app._settingsFields and app._settingsFields[c.key]
+                        I.check(field~=nil, 'declare bound settings before Options')
+                        local expected=({checkbox='boolean',text='string',font='font',color='color',select='enum'})[c.type]
+                        I.check(expected and field.type==expected or (not expected and (field.type=='number' or field.type=='integer')), 'control type does not match field')
+                        if c.type=='slider' then I.check(field.min~=nil and field.max~=nil, 'slider requires bounds')end
+                    end
+                    I.check(c.step==nil or (SND.Values.Number(c.step) and c.step>0), 'control step must be positive')
+                    I.check(c.format==nil or c.format=='percent' or type(c.format)=='function', 'invalid control formatter')
+                    if c.choices~=nil and type(c.choices)~='function' then choices(c.choices)end
+                end
+            end
+        end
         local panel = { _pages={}, _pool={}, _texts={}, _menus={}, _components={}, _offsets={} }; self._panel=panel
         local ids={}
-        for _, page in ipairs(spec.pages) do assert(type(page.id)=='string' and not ids[page.id],'duplicate or missing page id');ids[page.id]=true;panel._pages[#panel._pages+1]=page end
+        for _, page in ipairs(spec.pages) do I.check(type(page.id)=='string' and not ids[page.id],'duplicate or missing page id');ids[page.id]=true;panel._pages[#panel._pages+1]=page end
         panel._page=spec.pages[1].id
         local function frame(id,kind,parent,template)
             if not panel._pool[id] then panel._pool[id]=CreateFrame(kind,nil,parent,template) end
@@ -50,12 +87,14 @@ SND._install[#SND._install + 1] = function(app)
                 panel._edit=nil;if edit.preview then I.call(app,edit.preview,I.copy(edit.original)) end
             end
             if not panel._pickerHook then
-                panel._pickerHook=app._system:HookScript(picker,'OnHide',function()
+                local hooked, hook=app._system:HookScript(picker,'OnHide',function()
                     local hidden=panel._edit
                     app._system:After(0,'picker-hidden',function()
                         if panel._edit==hidden and hidden and not picker:IsShown() then panel:_cancelEditors(true) end
                     end)
                 end)
+                if not hooked then panel._edit=nil;return report(false,hook)end
+                panel._pickerHook=hook
             end
             picker:SetupColorPickerAndShow({r=edit.original[1],g=edit.original[2],b=edit.original[3],hasOpacity=false,extraInfo=edit,
                 swatchFunc=function()
@@ -84,22 +123,26 @@ SND._install[#SND._install + 1] = function(app)
                         app._system:After(0,'options-menu-refresh',function() if panel:IsShown() then panel:Refresh() end end)
                     end
                 end)
-                for _, entry in ipairs(type(entries)=='function' and entries() or entries) do
+                local offered=entries
+                if type(entries)=='function' then offered=entries() end
+                offered=I.copy(offered)
+                choices(offered)
+                for _, entry in ipairs(offered) do
                     local row=root:CreateRadio(entry.label,function(value)return I.equal(get(),value)end,set,entry.value)
                     row:AddInitializer(function(native) if native.fontString then native.fontString:SetFontObject(panel._menuFont) end end)
                 end
             end)
-            d:SetDefaultText(tostring(get() or 'Choose'));return d
+            local selected=get();d:SetDefaultText(selected==nil and 'Choose' or tostring(selected));return d
         end
         local function control(id,parent,c,width)
             local kind=c.type;local widget,label,height
             local field=c.key and app._settingsFields and app._settingsFields[c.key]
-            if c.key then assert(field,'control binds unknown field: '..c.key) end
+            if c.key then I.check(field,'control binds unknown field: '..c.key) end
             local function write(value) if not panel._refreshing then report(app:Set(c.key,value)) end end
             if kind=='custom' then
                 local container=frame(id,'Frame',parent);container:SetWidth(width);container:Show()
                 local component=panel._components[id]
-                if not component then component=c.create(container,app,panel._view);assert(component and component.Refresh and component.Layout and component.Hide,'invalid custom component');panel._components[id]=component end
+                if not component then component=c.create(container,app,panel._view);I.check(component and component.Refresh and component.Layout and component.Hide,'invalid custom component');panel._components[id]=component end
                 component:Refresh();local height=component:Layout(width);container:SetHeight(height);return container,height,component
             elseif kind=='description' then
                 label=text(id,parent,c.text or c.label,'muted');label:SetWidth(width);label:SetWordWrap(true);height=math.max(22,label:GetStringHeight()+8)
@@ -118,7 +161,7 @@ SND._install[#SND._install + 1] = function(app)
                 widget:SetScript('OnEscapePressed',function(e)e:ClearFocus();panel:Refresh()end)
                 label=text(id..':label',parent,c.label);height=56
             elseif kind=='slider' then
-                assert(field and field.min and field.max,'slider requires bounds')
+                I.check(field and field.min and field.max,'slider requires bounds')
                 widget=frame(id,'Slider',parent,'OptionsSliderTemplate');widget:SetSize(math.min(width,260),18)
                 widget:SetMinMaxValues(field.min,field.max);widget:SetValueStep(c.step or 1);widget:SetObeyStepOnDrag(true);widget:SetValue(app:Get(c.key))
                 widget:SetScript('OnValueChanged',function(_,value)write(value)end)
@@ -126,7 +169,7 @@ SND._install[#SND._install + 1] = function(app)
                 label=text(id..':label',parent,c.label..': '..formatted..(c.units and ' '..c.units or ''));height=56
             elseif kind=='color' then
                 widget=button(id,parent,c.label,function()color(c)end);height=34
-            else error('unknown control type: '..tostring(kind)) end
+            else I.check(false,'unknown control type') end
             if label then label:SetWidth(c.type=='checkbox' and width-32 or width) end
             if c.hint then
                 local hint=text(id..':hint',parent,c.hint,'muted');hint:SetWidth(width)
@@ -156,7 +199,7 @@ SND._install[#SND._install + 1] = function(app)
                 local tabWidth=math.min(120,((spec.width or 640)-32)/#self._pages-4)
                 b:SetSize(tabWidth,26);b:SetPoint('TOPLEFT',16+(i-1)*(tabWidth+4),-50)
             end
-            if not self._keep then self._keep=app.layout:KeepOnScreen(f,{margin=8}) end
+            if not self._keep then local ok,result=app.layout:KeepOnScreen(f,{margin=8});I.check(ok,result.message or 'layout unavailable');self._keep=result end
             self._built=true
         end
         function panel:_profiles()
@@ -224,7 +267,7 @@ SND._install[#SND._install + 1] = function(app)
                 if self._keep then self._keep:Refresh() end
             end)
             self._refreshing=nil
-            if not ok then self:Close();I.report(app,err);return false,I.error('build',tostring(err)) end
+            if not ok then self:Close();I.report(app,err);return false,I.error('build',err) end
             return true
         end
         function panel:Open(pageID)
@@ -232,7 +275,7 @@ SND._install[#SND._install + 1] = function(app)
             if pageID and not ids[pageID] then return false,I.error('unknownPage') end
             if self:IsShown() then if pageID then return self:SelectPage(pageID) end;return true end
             if pageID then self._page=pageID end
-            if not self._built then local ok,err=pcall(self._build,self);if not ok then self:Close();return false,I.error('build',tostring(err)) end end
+            if not self._built then local ok,err=pcall(self._build,self);if not ok then self:Close();return false,I.error('build',err) end end
             self._view=app:Scope('options-page');self.frame:Show()
             if app._settingsStore then self._view:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self:Refresh()end) end
             return self:Refresh()

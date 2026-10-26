@@ -14,4 +14,13 @@
 | Font and geometry boundaries | Native void/fractional font results and effective scales differ from naive Lua assumptions. |
 | Diagnostics and instance isolation | Bounded logs, slash collisions and independently embedded instances need explicit ownership. |
 
+Additional Lua review regressions are grouped by failure boundary:
+
+| Test | Why it exists |
+| --- | --- |
+| Lua value and return boundaries | Extra callback returns cannot become helper arguments; shared input references cannot bypass snapshot ownership. |
+| Declaration ownership and dense arrays | Holes must not silently drop configuration, mutable callers cannot alter registered definitions, and failed declarations must be retryable. |
+| Structured error containment | Error tables/metamethods must not escape recovery or retain mutable caller references. |
+| Result tuples and argument errors | Resource APIs must use the same boolean discriminant and reject invalid index/revision arguments before mutation. |
+
 The separate `exercises/run.lua` loads actual consumer domain modules and uses the real runtime with consumer-specific profile adapters and mock views. It justifies the generalization boundary; it is not a duplicate state implementation. See the root exercise report for evidence and remaining native checks.

@@ -19,20 +19,20 @@ local function accountAdapter()
     end
     function A:Restore(saved)
         local db=saved.XPIntegrationDB or {profiles={Shared={scale=1},Solo={scale=1}},characters={}}
-        return state(db)
+        return true,{state=state(db)}
     end
     function A:Prepare(current,op)
         local db,character=current.database,current.character
         if op.kind=='bind'then character=op.identity;db.characters[character]=db.characters[character]or'Shared'
-        elseif op.kind=='switch'then if not db.profiles[op.name]then return nil,{code='missing'}end;db.characters[character]=op.name
+        elseif op.kind=='switch'then if not db.profiles[op.name]then return false,{code='missing'}end;db.characters[character]=op.name
         elseif op.kind=='set'then db.profiles[current.activeProfile][op.path]=op.value end
-        return{state=state(db,character),saved={XPIntegrationDB=db}}
+        return true,{state=state(db,character),saved={XPIntegrationDB=db}}
     end
     return A
 end
 xp:Settings({savedVariables={'XPIntegrationDB'},adapter=accountAdapter(),fields={scale={type='number',default=1,min=.5,max=2}}})
 local identities=0;xp:Scope():Watch(xp:SelectSettings(function(_,context)return{profile=context.activeProfile,waiting=context.needsCharacter}end),function()identities=identities+1 end)
-boot(xp);assert(not xp:Set('scale',1.2));assert(xp.profiles:BindCharacter('Character-Realm'))
+boot(xp);local changed,failure=xp:Set('scale',1.2);assert(changed==false and failure.code=='readOnly' and type(failure.message)=='string');assert(xp.profiles:BindCharacter('Character-Realm'))
 assert(xp.profiles:Switch('Solo'));assert(identities==3 and XPIntegrationDB.characters['Character-Realm']=='Solo')
 local tracker=XP.NewTracker(XP.NewSession('fixture',100));tracker:Sample(10,100,1000,'unknown',1,false)
 local display=xp:State({xp=tracker.xp,cap=tracker.cap});local paints=0;local view=xp:Scope('display')
@@ -61,18 +61,18 @@ print('PASS FAU: recovery, capacity semantics, metadata invalidation, reopen, fu
 
 -- ATCF: real navigation state, independently shaped per-character profile persistence.
 local ATCF=loadAddon('AsTheCrowFlies',{'Model.lua','Navigation.lua'})
-local atcf,atcfSDK=factory('ATCFIntegration')
+local atcf=factory('ATCFIntegration')
 local adapter={}
 function adapter:Restore(saved)
     local profiles=saved.ATCFIntegrationProfiles or {active='Default',entries={Default={scale=1},Travel={scale=1}}}
-    return {values=profiles.entries[profiles.active],activeProfile=profiles.active,profiles={names={'Default','Travel'},operations={switch=true}},database=profiles},
-        {ATCFIntegrationDB=profiles.entries[profiles.active],ATCFIntegrationProfiles=profiles}
+    return true, {state={values=profiles.entries[profiles.active],activeProfile=profiles.active,profiles={names={'Default','Travel'},operations={switch=true}},database=profiles},
+        saved={ATCFIntegrationDB=profiles.entries[profiles.active],ATCFIntegrationProfiles=profiles}}
 end
 function adapter:Prepare(state,op)
     local profiles=state.database
-    if op.kind=='switch'then if not profiles.entries[op.name]then return nil,{code='missing'}end;profiles.active=op.name
+    if op.kind=='switch'then if not profiles.entries[op.name]then return false,{code='missing'}end;profiles.active=op.name
     elseif op.kind=='set'then profiles.entries[profiles.active][op.path]=op.value end
-    local nextState,saved=self:Restore({ATCFIntegrationProfiles=profiles});return{state=nextState,saved=saved}
+    return self:Restore({ATCFIntegrationProfiles=profiles})
 end
 atcf:Settings({savedVariables={'ATCFIntegrationDB','ATCFIntegrationProfiles'},adapter=adapter,fields={scale={type='number',default=1,min=.5,max=2}}})
 boot(atcf)
@@ -82,15 +82,19 @@ assert(not atcf.profiles:Switch('missing'));assert(atcf.profiles:Active()=='Trav
 local nav=ATCF.Navigation.New();local origin,destination={x=0,y=0,map=1},{x=100,y=0,map=1}
 assert(ATCF.Navigation.Start(nav,{legs={{mode='walk',start=origin,finish=destination}},destination=destination},origin,0))
 local search=atcf:State({query='',generation=0,searching=false,matches={}})
+local requests=atcf:Scope('search-requests')
 local function begin(query)
     search:Update(function(s)s.query=query;s.generation=s.generation+1;s.searching=true;s.matches={}end)
     local generation=search:Read().generation
-    return function(matches)
+    local completion=function(matches)
         if generation~=search:Read().generation then return false end
         return search:Update(function(s)s.matches=matches;s.searching=false end)
     end
+    local scheduled,timer=requests:After(.12,'search',function()assert(completion({query}))end)
+    assert(scheduled and type(timer.Cancel)=='function')
+    return completion
 end
-local old=begin('Stormwind');local current=begin('Ironforge');assert(not old({'Stormwind'}));assert(current({'Ironforge'}));assert(nav.state=='walking')
+local old=begin('Stormwind');local current=begin('Ironforge');assert(not old({'Stormwind'}));W.tick(.2);assert(search:Read().matches[1]=='Ironforge');assert(nav.state=='walking')
 -- Two custom component consumers exercise page ownership without adding a binding DSL.
 for _,consumer in ipairs({fau,atcf})do
     local seen,builds=0,0;local runtime=consumer:State({n=0})

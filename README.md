@@ -19,7 +19,7 @@ add-on's behavior in the add-on. SND grew out of
 [AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
 consumers with enough shared plumbing to justify a small library.
 
-Version **0.1.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
+Version **0.2.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
 required third-party dependencies. LibSharedMedia is used when available.
 
 ## Contents
@@ -192,6 +192,28 @@ Custom options components receive a positioned parent and a scope for the visibl
 page. Implement `Refresh`, `Layout(width)` and `Hide`, and reuse your frames when
 the page opens again. You don't need a separate UI binding language.
 
+### Handling errors
+
+Fallible operations use a small Result tuple: `true, value` or `false, error`.
+Commands return `true, nil`; operations that create a timer, hook or layout
+handle return that handle as the second value:
+
+```lua
+local ok, timer = preview:After(0.15, "refresh", function() ns.Preview:Refresh() end)
+if not ok then
+    app.log:Warn(timer.message, { code = timer.code })
+    return
+end
+-- timer:Cancel() cancels this operation; preview:Cancel() cancels the whole scope.
+```
+
+Errors have a stable `code` and a diagnostic `message`. Invalid declarations and
+wrong argument shapes raise programmer errors. Async callback exceptions are
+reported through diagnostics and WoW's error handler. Getters and infallible
+registrations keep their direct return values. See the
+[full contract](API.md#result-and-exception-contract) and
+[0.2 migration notes](CHANGELOG.md) before upgrading a 0.1 consumer.
+
 ## Design Notes
 
 A few decisions are worth making explicit:
@@ -245,7 +267,7 @@ If you're using Python with Lupa instead of a Lua executable, use
 Lua 5.1 explicitly. CI runs the self-contained suite; it doesn't require access
 to private consumer repositories.
 
-Version 0.1.0 has offline contract and consumer-mock validation. Native rendering,
+Version 0.2.0 has offline contract and consumer-mock validation. Native rendering,
 menu/picker input, combat restrictions and mixed-version coexistence still need
 in-game acceptance on the target client. The mocks aren't migrations of the
 shipping add-ons.

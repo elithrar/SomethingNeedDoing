@@ -5,29 +5,36 @@ local edges = {
     tooltip='Interface\\Tooltips\\UI-Tooltip-Border', dialog='Interface\\DialogFrame\\UI-DialogBox-Border',
 }
 local roles = { dialog=true, section=true, button=true, tab=true, input=true }
+local function nativeObject(value)
+    return V.Readable(value) and (type(value)=='table' or type(value)=='userdata')
+end
 local function safeFrame(frame)
-    return frame and (not frame.IsForbidden or not frame:IsForbidden()) and (not frame.IsProtected or not frame:IsProtected())
+    if not nativeObject(frame) then return false end
+    local ok, safe = pcall(function()
+        return (not frame.IsForbidden or not frame:IsForbidden()) and (not frame.IsProtected or not frame:IsProtected())
+    end)
+    return ok and safe
 end
 I.safeFrame = safeFrame
 SND._install[#SND._install + 1] = function(app)
     local ui, fonts, layout = {}, {}, {}; app.ui, app.fonts, app.layout = ui, fonts, layout
     local styled = setmetatable({}, {__mode='k'})
     function ui:Border(frame, kind)
-        if not safeFrame(frame) or not frame.SetBackdrop then return false, I.error('unavailable') end
+        if not safeFrame(frame) or type(frame.SetBackdrop)~='function' or type(frame.SetBackdropColor)~='function' or type(frame.SetBackdropBorderColor)~='function' then return false, I.error('unavailable') end
         if kind ~= 'none' and not edges[kind] then return false, I.error('invalid') end
         local backdrop = frame.GetBackdrop and frame:GetBackdrop() or {}
         local spec = {}; for k,v in pairs(backdrop or {}) do spec[k] = v end
         spec.edgeFile = edges[kind]; spec.edgeSize = kind == 'thin' and 1 or kind == 'dialog' and 16 or 12
         local bg = frame.GetBackdropColor and { frame:GetBackdropColor() }
         local ok, err = pcall(frame.SetBackdrop, frame, spec)
-        if not ok then return false, I.error('unavailable', tostring(err)) end
+        if not ok then return false, I.error('unavailable', err) end
         if bg and bg[1] then frame:SetBackdropColor(unpack(bg)) end
         if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(.45,.45,.45,1) end
         return true
     end
     function ui:Style(frame, role)
         if not roles[role] then return false, I.error('invalid') end
-        if not safeFrame(frame) or not frame.SetBackdrop then return false, I.error('unavailable') end
+        if not safeFrame(frame) or type(frame.SetBackdrop)~='function' or type(frame.SetBackdropColor)~='function' or type(frame.SetBackdropBorderColor)~='function' then return false, I.error('unavailable') end
         frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8', edgeFile=edges.default, edgeSize=12,
             insets={left=3,right=3,top=3,bottom=3}})
         frame:SetBackdropColor(.055,.055,.065,.97); frame:SetBackdropBorderColor(.45,.45,.45,1)
@@ -95,7 +102,7 @@ SND._install[#SND._install + 1] = function(app)
         return true
     end
     function fonts:Apply(object, role)
-        if not sizes[role] or not object or not object.SetFont or not object.GetFont then return false, I.error('invalid') end
+        if not sizes[role] or not nativeObject(object) or type(object.SetFont)~='function' or type(object.GetFont)~='function' then return false, I.error('invalid') end
         applications[object] = role
         local before=generation
         local ok,err=apply(object,role)
@@ -103,7 +110,7 @@ SND._install[#SND._install + 1] = function(app)
         return ok,err
     end
     function fonts:Measure(text)
-        assert(text and text.GetStringWidth and text.GetStringHeight, 'FontString required')
+        I.check(nativeObject(text) and type(text.GetStringWidth)=='function' and type(text.GetStringHeight)=='function' and type(text.GetFont)=='function', 'FontString required')
         local path,size,flags=text:GetFont();local scale=text:GetEffectiveScale()
         local key=tostring(path)..':'..tostring(size)..':'..tostring(flags)..':'..tostring(scale)..':'..tostring(text:GetWidth())..':'..(text:GetText()or'')
         local cached=measurements[text]
@@ -150,10 +157,12 @@ SND._install[#SND._install + 1] = function(app)
         return left*ratio, bottom*ratio, width*ratio, height*ratio, ratio
     end
     local function track(frame, anchor, spec)
-        spec = spec or {}
-        if not safeFrame(frame) or (anchor and not safeFrame(anchor)) then return nil, I.error('unavailable') end
-        local margin = spec.margin or 0
-        if not V.Number(margin) or margin<0 then return nil, I.error('invalid') end
+        I.check(spec==nil or I.plain(spec), 'layout spec must be a plain table')
+        spec = I.copy(spec or {})
+        I.check((spec.preferredSide==nil or spec.preferredSide=='left' or spec.preferredSide=='right') and (spec.fallbackSide==nil or spec.fallbackSide=='left' or spec.fallbackSide=='right'), 'popup sides must be left or right')
+        if not safeFrame(frame) or type(frame.GetLeft)~='function' or type(frame.SetPoint)~='function' or (anchor and (not safeFrame(anchor) or type(anchor.GetLeft)~='function')) then return false, I.error('unavailable') end
+        local margin = spec.margin; if margin == nil then margin = 0 end
+        if not V.Number(margin) or margin<0 then return false, I.error('invalid') end
         local h, dragging = nil, false
         local owner = app:Scope()
         h = I.handle(app, function() active[h] = nil; owner:Cancel() end)
@@ -180,7 +189,7 @@ SND._install[#SND._install + 1] = function(app)
         if anchor then owner:HookScript(anchor,'OnSizeChanged',function() h:Refresh() end) end
         owner:HookScript(frame,'OnDragStart',function() dragging=true end)
         owner:HookScript(frame,'OnDragStop',function() dragging=false;h:Refresh() end)
-        h:Refresh(); return h
+        h:Refresh(); return true, h
     end
     function layout:KeepOnScreen(frame,spec) return track(frame,nil,spec) end
     function layout:PlacePopup(frame,anchor,spec) return track(frame,anchor,spec) end

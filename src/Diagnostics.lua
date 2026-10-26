@@ -31,5 +31,5 @@ SND._install[#SND._install + 1] = function(app)
     end
     function log:Entries() return I.copy(records) end
     function log:Clear() records = {} end
-    function log:SetLevel(level) assert(levels[level], 'unknown log level'); threshold = levels[level] end
+    function log:SetLevel(level) I.check(levels[level], 'unknown log level'); threshold = levels[level] end
 end

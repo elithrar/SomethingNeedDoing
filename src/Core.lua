@@ -1,6 +1,6 @@
 local _, ns = ...
 assert(type(ns) == "table" and ns.SomethingNeedDoing == nil, "SND must load once into the consumer namespace")
-local SND = { VERSION = "0.1.0", Values = {}, Pages = {}, _install = {} }
+local SND = { VERSION = "0.2.0", Values = {}, Pages = {}, _install = {} }
 ns.SomethingNeedDoing = SND
 local I = {}; SND._ = I
 local V = SND.Values
@@ -12,27 +12,57 @@ end
 function V.Number(value)
     return V.Readable(value) and type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
 end
-function I.error(code, message) return { code = code, message = message or code } end
-function I.copy(value, seen, depth, budget)
-    assert(V.Readable(value), "restricted value")
+-- Errors never invoke consumer metamethods or retain consumer-owned error tables.
+function I.error(code, detail)
+    local message
+    if V.Readable(detail) and type(detail) == 'table' then
+        local suppliedCode, suppliedMessage = rawget(detail, 'code'), rawget(detail, 'message')
+        if V.Readable(suppliedCode) and type(suppliedCode) == 'string' and suppliedCode:match('^[%w_]+$') and #suppliedCode <= 64 then code = suppliedCode end
+        if V.Readable(suppliedMessage) and type(suppliedMessage) == 'string' then message = suppliedMessage end
+    elseif V.Readable(detail) and type(detail) == 'string' then message = detail end
+    return { code = code, message = (message or code):sub(1, 1024) }
+end
+function I.check(condition, message)
+    if not condition then error('SND: ' .. message, 3) end
+    return condition
+end
+function I.plain(value)
+    return V.Readable(value) and type(value) == 'table' and getmetatable(value) == nil
+end
+function I.array(value, label, nonempty)
+    I.check(I.plain(value), label .. ' must be a plain dense array')
+    local count, maximum = 0, 0
+    for key in pairs(value) do
+        I.check(V.Number(key) and key >= 1 and key == math.floor(key), label .. ' must use consecutive integer keys starting at 1')
+        count = count + 1; maximum = math.max(maximum, key)
+    end
+    I.check(count == maximum and (not nonempty or count > 0), label .. ' must be dense' .. (nonempty and ' and nonempty' or ''))
+    return count
+end
+function I.revision(value)
+    return value == nil or (V.Number(value) and value >= 0 and value == math.floor(value))
+end
+function I.copy(value, seen, depth, budget, functions)
+    I.check(V.Readable(value), "restricted value")
     local kind = type(value)
     if kind ~= "table" then
-        assert(kind == "nil" or kind == "boolean" or kind == "string" or (kind == "number" and V.Number(value)), "plain data required")
+        I.check((functions and kind == "function") or kind == "nil" or kind == "boolean" or kind == "string" or (kind == "number" and V.Number(value)), "plain data required")
         return value
     end
     depth, budget, seen = (depth or 0) + 1, budget or { n = 0 }, seen or {}
-    assert(depth <= 32 and not seen[value] and getmetatable(value) == nil, "invalid state tree")
+    I.check(depth <= 32 and not seen[value] and getmetatable(value) == nil, "invalid state tree")
     seen[value] = true
     local out = {}
     for key, child in pairs(value) do
         budget.n = budget.n + 1
-        assert(budget.n <= 20000, "state tree exceeds 20000 entries")
-        assert(V.Readable(key) and (type(key) == "string" or (V.Number(key) and key == math.floor(key))), "invalid state key")
-        out[key] = I.copy(child, seen, depth, budget)
+        I.check(budget.n <= 20000, "state tree exceeds 20000 entries")
+        I.check(V.Readable(key) and (type(key) == "string" or (V.Number(key) and key == math.floor(key))), "invalid state key")
+        out[key] = I.copy(child, seen, depth, budget, functions)
     end
     seen[value] = nil
     return out
 end
+function I.definition(value) return I.copy(value, nil, nil, nil, true) end
 function I.equal(a, b)
     if type(a) ~= type(b) then return false end
     if type(a) ~= "table" then return a == b end
@@ -44,13 +74,8 @@ function I.get(t, path)
     for key in path:gmatch('[^.]+') do if type(t) ~= 'table' then return nil end; t = t[key] end
     return t
 end
-function I.put(t, path, value)
-    local keys = {}; for key in path:gmatch('[^.]+') do keys[#keys + 1] = key end
-    for i = 1, #keys - 1 do t[keys[i]] = t[keys[i]] or {}; t = t[keys[i]] end
-    t[keys[#keys]] = value
-end
 function I.report(app, err)
-    local message = V.Readable(err) and type(err) == 'string' and err or 'SND callback failed'
+    local message = I.error('callback', err).message
     if app.log then app.log:Error(message) end
     if geterrorhandler then local ok, handler = pcall(geterrorhandler); if ok and handler then pcall(handler, message) end end
 end
@@ -74,7 +99,7 @@ function I.handle(owner, cancel)
         self.active = false
         if owner then owner._handles[self] = nil end
         local cleanup = cancel; cancel = nil
-        if cleanup then cleanup() end
+        if cleanup then if app then I.call(app, cleanup) else cleanup() end end
     end
     if owner then owner._handles[h] = true end
     return h
@@ -91,15 +116,17 @@ function I.activate(app, h, fn)
 end
 local apps = {}
 function SND:NewAddon(name, spec)
-    assert(type(name) == 'string' and name:match('^[%w_%-]+$') and not apps[name], 'invalid or duplicate addon name')
-    assert(CreateFrame, 'SND requires WoW frame APIs')
+    I.check(type(name) == 'string' and name:match('^[%w_%-]+$') and not apps[name], 'invalid or duplicate addon name')
+    I.check(spec == nil or I.plain(spec), 'NewAddon spec must be a plain table')
+    I.check(not spec or spec.version==nil or type(spec.version)=='string', 'version must be a string')
+    I.check(CreateFrame, 'SND requires WoW frame APIs')
     local app = { name = name, version = (spec or {}).version, _pending = {}, _scopes = {}, _handles = {}, _order = 0, _stores = {} }
     apps[name] = app
     local frame = CreateFrame('Frame'); app._frame = frame
     frame:RegisterEvent('ADDON_LOADED'); frame:RegisterEvent('PLAYER_LOGOUT')
     function app:IsReady() return self._ready == true end
     function app:OnReady(callback)
-        assert(type(callback) == 'function' and not self._disposed, 'invalid ready callback')
+        I.check(type(callback) == 'function' and not self._disposed, 'invalid ready callback')
         local h
         h = I.handle(self, function() self._pending[h] = nil; h._start = nil; callback = nil end)
         if self._ready then

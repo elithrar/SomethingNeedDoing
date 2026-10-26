@@ -1,6 +1,6 @@
-# SomethingNeedDoing API — 0.1.0
+# SomethingNeedDoing API — 0.2.0
 
-**Status: initial implementation, version 0.1.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
+**Status: initial implementation, version 0.2.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
 SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
@@ -40,11 +40,38 @@ end)
 | `app:OnReady(callback) -> subscription` | Once, after the matching `ADDON_LOADED` and successful settings restoration. A late subscriber is queued for the next frame. |
 | `app:IsReady() -> boolean` | Settings/bootstrap readiness, not player identity, world readiness, or API availability. |
 | `app:Scope(name) -> scope` | Create an active owner for subscriptions and work. Duplicate live names are rejected; a canceled name can be reused with a new identity. |
-| `app:Slash(command, callback) -> subscription, error` | Register an explicit slash command; callback receives the unmodified argument string. Reject collisions rather than overwriting another owner. |
+| `app:Slash(command, callback) -> ok, subscriptionOrError` | Register an explicit slash command; callback receives the unmodified argument string. Reject collisions rather than overwriting another owner. |
 
 Settings declarations must happen before restoration. Ordinary scoped subscriptions become active after `OnReady`; internal bootstrap uses its own event owner. Logout disposes owned runtime work without rewriting domain checkpoints. There is no implicit restart, enable/disable lifecycle, or guarantee that a module is safe merely because `OnReady` ran.
 
-Registration mistakes raise developer-facing errors. Recoverable runtime failures return `nil, { code = "...", message = "..." }`; boolean mutation methods return `false, error`. Callback exceptions are reported to diagnostics and the native error handler, with cleanup completed and no automatic retry.
+### Result and exception contract
+
+Fallible public operations return a lightweight **Result tuple**: `true, value` on success or `false, error` on failure. Commands such as Set/Update/profile mutations return `true, nil`; resource registrations return `true, handle`. Test the first value, not the payload: successful payloads may be false or nil. There is no allocated Result wrapper, unwrap helper, or implicit exception conversion around arbitrary consumer code.
+
+```lua
+local ok, result = world:After(0.15, "refresh", function() ns.UI:Refresh() end)
+if not ok then
+    app.log:Warn(result.message, { code = result.code })
+    return
+end
+result:Cancel()
+```
+
+Error records are fresh `{ code = string, message = string }` tables, never the adapter's mutable error object. Codes are stable identifiers; messages are diagnostic text, bounded to 1,024 bytes. String errors and ordinary records from callbacks/adapters are normalized without invoking `__index` or `__tostring`. Invalid error records receive a fallback code/message. Match codes rather than parsing messages.
+
+Malformed declarations, wrong argument shapes, use of canceled owners, and invalid revisions raise descriptive `SND:` programmer errors before registering work. Operational failures (invalid entered values, read-only/stale state, unavailable native APIs and collisions) return failed Results. Exceptions in transaction callbacks become failed Results without publication. Exceptions in asynchronous/notification callbacks are reported to diagnostics and WoW's native error handler; no caller is waiting to receive a Result, and successful commits are not rolled back. Cleanup continues after an individual cleanup failure.
+
+Infallible registrations and reads retain their direct signatures: NewAddon, State, Scope, Settings, Options, OnReady, Watch, OnSettingsChanged, selectors and getters do not gain a redundant success boolean. Adapter Restore/Prepare use the Result protocol below. Consumer rendering/event callbacks return no Result; selectors consume their first return only. Mutators accept implicit nil as success or `false, error` to reject; validators must return literal `true` or `false, error`.
+
+### Lua table and argument contracts
+
+Ordered inputs (pages, sections, controls, choices, SavedVariables names, profile names, enum values) must be plain dense arrays with keys exactly `1..n`. Holes, zero/negative indices and extra map keys are rejected rather than silently truncated by ipairs. State records may still contain sparse integer-keyed maps; their interpretation belongs to the consumer.
+
+Declare bound fields with Settings before Options. Control types must match their fields (select binds enum; slider/number bind numeric fields); invalid bindings fail at declaration rather than producing an unusable panel.
+
+Declaration tables are defensively copied before installation, including nested options tables and adapter method tables. Callback functions retain their normal Lua closure identity; SND cannot freeze captured upvalues. Invalid declarations leave registration available for a corrected retry. Plain-data trees reject metatables and cycles; repeated references are copied independently, not preserved as aliases.
+
+Scope names are optional nonempty strings. Timer keys may be strings, finite numbers or identity tables; nil, booleans and NaN are rejected before indexing. Expected revisions are optional finite nonnegative integers. Profile names are nonempty strings. Numeric schema bounds must be finite, ordered numbers; maxLength is a nonnegative integer.
 
 ## 3. Settings declarations and writes
 
@@ -75,7 +102,7 @@ local ok, err = app:Set("fontSize", 16)
 | --- | --- |
 | `app:Settings(spec)` | One declaration per app; names must already be declared in the consumer's TOC. Multiple variables support existing profile layouts. |
 | `app:Get(path) -> value` | Validated active settings; table values are defensive copies. Reading before readiness is an error. |
-| `app:Set(path, value, expectedRevision?) -> boolean, error` | Validate, prepare, commit, then notify. Unknown fields, unreadable values, invalid types, and read-only stores fail without mutation. |
+| `app:Set(path, value, expectedRevision?) -> ok, errorOrNil` | Validate, prepare, commit, then notify. Unknown fields, unreadable values, invalid types, and read-only stores fail without mutation. |
 | `app:OnSettingsChanged(callback) -> subscription` | Receive committed changes; listener failures cannot roll back a successful commit. |
 | `change:Touches(...) -> boolean` | Whether any named field changed. Profile switches also carry `profileChanged = true`. |
 
@@ -91,12 +118,13 @@ The adapter is add-on-owned. SND reads only declared globals after restoration; 
 local Adapter = {}
 
 function Adapter:Restore(savedByName, fields)
-    -- -> state, normalizedSavedByName OR nil, error
+    -- -> true, { state = restoredState, saved = normalizedSavedByName }
+    -- OR false, error; read-only state may omit saved.
     -- Validate/migrate copies; preserve unrecognized future data verbatim.
 end
 
 function Adapter:Prepare(state, operation, fields)
-    -- -> candidate OR nil, error
+    -- -> true, candidate OR false, error
     -- candidate = { state = nextState, saved = nextSavedByName }
     -- Pure staging: do not mutate current state or restored globals.
 end
@@ -135,9 +163,9 @@ end)
 
 | API | Contract |
 | --- | --- |
-| `app:State(initial, spec?) -> state` | Create an app-owned, memory-only plain-data store with a table root. Optional `spec.validate(candidate) -> boolean, error` validates initial data and each candidate. It cannot normalize or mutate committed data. |
+| `app:State(initial, spec?) -> state` | Create an app-owned, memory-only plain-data store with a table root. Optional `spec.validate(candidate) -> ok, errorOrNil` validates initial data and each candidate. It cannot normalize or mutate committed data. |
 | `state:Read() -> snapshot, revision` | Defensive copy and monotonically increasing store-local revision, starting at zero. |
-| `state:Update(mutator, expectedRevision?) -> boolean, error` | Copy current state, run the mutator, validate, commit once, then notify. Optional revision rejects stale writes before running the mutator. |
+| `state:Update(mutator, expectedRevision?) -> ok, errorOrNil` | Copy current state, run the mutator, validate, commit once, then notify. Optional revision rejects stale writes before running the mutator. |
 | `state:Select(project) -> selection` | Describe a pure projection of this store. A selection is not another mutable store and has no scheduler or permanent subscription. |
 | `scope:Watch(selection, callback) -> subscription` | Deliver the current selected value once on activation, then changed values after commits. Callback receives `(value, previous, revision)`; previous is nil on initial delivery. Scope/handle cancellation detaches it. |
 | `app:SelectSettings(project) -> selection` | Project directly from committed active settings, using the same Watch contract. No mirrored settings store. Project receives `(values, context)` where context contains `activeProfile`, `readOnly`, and `needsCharacter`. |
@@ -203,7 +231,7 @@ app.profiles:Reset()
 | `profiles:CopyFrom(name)` | Replace active settings from another profile, retaining the active name. |
 | `profiles:Reset()` | Reset the active settings to validated defaults. |
 
-Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.1.0.
+Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.2.0.
 
 Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This replaces preview-then-rollback writes; the focused picker test covers native hide-before-accept and stale callbacks.
 
@@ -255,22 +283,23 @@ app.ui:Style(button, "button")
 app.fonts:Apply(title, "heading")
 app.fonts:Apply(label, "body")
 
-local keep = app.layout:KeepOnScreen(window, { margin = 12 })
-local placement = app.layout:PlacePopup(menu, button, {
+local kept, keep = app.layout:KeepOnScreen(window, { margin = 12 })
+if not kept then app.log:Warn(keep.message); return end
+local placed, placement = app.layout:PlacePopup(menu, button, {
     preferredSide = "right", fallbackSide = "left", margin = 8,
 })
 ```
 
 | API | Contract |
 | --- | --- |
-| `ui:Style(frame, role) -> boolean, error` | Apply named theme roles: `dialog`, `section`, `button`, `tab`, `input`. Idempotent; preserve caller content and scripts. |
-| `ui:Border(frame, kind) -> boolean, error` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background. These helpers require owned BackdropTemplate frames; they do not alter Blizzard NineSlice artwork. |
-| `fonts:Apply(object, role) -> boolean, error` | Assign role family/size (`heading`, `body`, `muted`, `control`, `menu`). Semantic color is supplied by the theme; muted text need not be smaller. |
+| `ui:Style(frame, role) -> ok, errorOrNil` | Apply named theme roles: `dialog`, `section`, `button`, `tab`, `input`. Idempotent; preserve caller content and scripts. |
+| `ui:Border(frame, kind) -> ok, errorOrNil` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background. These helpers require owned BackdropTemplate frames; they do not alter Blizzard NineSlice artwork. |
+| `fonts:Apply(object, role) -> ok, errorOrNil` | Assign role family/size (`heading`, `body`, `muted`, `control`, `menu`). Semantic color is supplied by the theme; muted text need not be smaller. |
 | `fonts:Entries() -> entries` | Stable font choices including unavailable saved preferences. |
 | `fonts:Measure(text) -> width, height` | Measured in the text object's local UI units, using actual native font readback and effective scale. |
 | `fonts:Refresh()` | Reapply registered roles; bounded family fallback keeps owned text consistent. Measurements cache by font, text, width and effective scale. |
-| `layout:KeepOnScreen(frame, spec) -> handle, error` | Keep an owned, unprotected frame within usable UIParent bounds; recheck on geometry changes. |
-| `layout:PlacePopup(popup, anchor, spec) -> handle, error` | Place beside an anchor, try the alternate side, then clamp; re-evaluate on show, size and display changes. Call Refresh after moving the anchor. |
+| `layout:KeepOnScreen(frame, spec) -> ok, handleOrError` | Keep an owned, unprotected frame within usable UIParent bounds; recheck on geometry changes. |
+| `layout:PlacePopup(popup, anchor, spec) -> ok, handleOrError` | Place beside an anchor, try the alternate side, then clamp; re-evaluate on show, size and display changes. Call Refresh after moving the anchor. |
 
 Layout margins are UIParent logical units. Geometry calculations normalize effective scales before comparison; cursor pixels, local frame units, and UIParent units cannot be mixed. Screen awareness means usable UIParent bounds, including native notch handling, not hard-coded physical monitor dimensions. These helpers do not save placement, choose a dock side, show hidden frames, or override an OnDragStart/OnDragStop gesture. Consumers using custom movement scripts must avoid calling Refresh during movement. Handles support `Refresh()` and idempotent `Cancel()`.
 
@@ -298,12 +327,12 @@ scope:Cancel()
 
 | API | Contract |
 | --- | --- |
-| `scope:Event(event, callback) -> subscription, error` | Callback receives native payload only, without an injected event name or self. |
-| `scope:PostHook(globalName, callback)` | Observe a global function through `hooksecurefunc`; receives original arguments, not return values. |
-| `scope:PostHook(table, methodName, callback)` | Equivalent table-method overload; original self remains in the native argument list. |
-| `scope:HookScript(frame, scriptName, callback)` | Additive script observer; receives native frame and arguments. Never replace another owner's script. |
-| `scope:After(seconds, key, callback) -> handle, error` | Schedule once; the same key replaces earlier pending work in this scope. Zero means next-frame work. |
-| `scope:Every(seconds, key, callback) -> handle, error` | Positive-period recurring work. Callback receives elapsed time; no catch-up burst after a stall. |
+| `scope:Event(event, callback) -> ok, subscriptionOrError` | Callback receives native payload only, without an injected event name or self. Native registration is checked immediately; delivery begins only after readiness. |
+| `scope:PostHook(globalName, callback) -> ok, subscriptionOrError` | Observe a global function through `hooksecurefunc`; receives original arguments, not return values. |
+| `scope:PostHook(table, methodName, callback) -> ok, subscriptionOrError` | Equivalent table-method overload; original self remains in the native argument list. |
+| `scope:HookScript(frame, scriptName, callback) -> ok, subscriptionOrError` | Additive script observer; receives native frame and arguments. Never replace another owner's script. |
+| `scope:After(seconds, key, callback) -> ok, handleOrError` | Schedule once; the same key replaces earlier pending work in this scope. Zero means next-frame work. |
+| `scope:Every(seconds, key, callback) -> ok, handleOrError` | Positive-period recurring work. Callback receives elapsed time; no catch-up burst after a stall. |
 | `scope:Guard(callback) -> callback` | Wrap a callback for an external asynchronous API; becomes inert when the scope is canceled. |
 | `scope:Cancel()` | Terminal and idempotent: remove owned subscribers, cancel work, invalidate guards, release callback references. |
 
@@ -329,7 +358,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Verification and remaining integration gates
 
-The implementation is covered by [nine focused contract tests](tests/README.md), each with an explicit failure-risk justification, and [three consumer mocks](STATE-EXERCISES.md) against the real runtime. The consumer mocks additionally load original domain modules at pinned revisions. They do not migrate the shipping add-ons.
+The implementation is covered by [focused contract tests](tests/README.md), each with an explicit failure-risk justification, and [three consumer mocks](STATE-EXERCISES.md) against the real runtime. The consumer mocks additionally load original domain modules at pinned revisions. They do not migrate the shipping add-ons.
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 

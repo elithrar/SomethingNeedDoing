@@ -15,7 +15,7 @@ local function fieldValid(value, field)
         return false
     end
     if kind == 'color' then
-        if type(value) ~= 'table' or #value ~= 3 then return false end
+        if not I.plain(value) or value[1]==nil or value[2]==nil or value[3]==nil then return false end
         for k,v in pairs(value) do if (k ~= 1 and k ~= 2 and k ~= 3) or not V.Number(v) or v < 0 or v > 1 then return false end end
         return true
     end
@@ -24,16 +24,28 @@ end
 SND._install[#SND._install + 1] = function(app)
     local spec, current, store, listeners = nil, nil, nil, {}
     local function validate(state)
-        assert(type(state) == 'table' and type(state.values) == 'table', 'adapter must supply values')
-        assert(state.readOnly == nil or type(state.readOnly) == 'boolean', 'invalid readOnly')
-        for path, field in pairs(spec.fields) do assert(fieldValid(I.get(state.values, path), field), 'invalid field: ' .. path) end
+        I.check(type(state) == 'table' and type(state.values) == 'table', 'adapter must supply values')
+        I.check(state.needsCharacter == nil or type(state.needsCharacter) == 'boolean', 'invalid needsCharacter')
+        I.check(state.activeProfile == nil or (type(state.activeProfile) == 'string' and state.activeProfile ~= ''), 'invalid activeProfile')
+        if state.profiles ~= nil then
+            I.check(I.plain(state.profiles), 'invalid profiles descriptor')
+            local names = state.profiles.names; if names==nil then names={} end; I.array(names, 'profile names')
+            local unique = {}; for _, name in ipairs(names) do I.check(type(name)=='string' and name~='' and not unique[name], 'invalid or duplicate profile name'); unique[name]=true end
+            I.check(state.activeProfile == nil or unique[state.activeProfile], 'active profile is missing from profile names')
+            I.check(state.profiles.operations == nil or I.plain(state.profiles.operations), 'invalid profile operations')
+            for key, value in pairs(state.profiles.operations or {}) do
+                I.check(({switch=true,duplicate=true,copy=true,reset=true,bind=true})[key] and type(value)=='boolean', 'invalid profile operation')
+            end
+        end
+        I.check(state.readOnly == nil or type(state.readOnly) == 'boolean', 'invalid readOnly')
+        for path, field in pairs(spec.fields) do I.check(fieldValid(I.get(state.values, path), field), 'invalid field: ' .. path) end
         return I.copy(state)
     end
     local function savedCopy(saved)
-        assert(type(saved) == 'table', 'adapter must supply saved globals')
+        I.check(type(saved) == 'table', 'adapter must supply saved globals')
         local result = {}
-        for _, name in ipairs(spec.savedVariables) do assert(saved[name] ~= nil, 'missing saved global: ' .. name); result[name] = I.copy(saved[name]) end
-        for name in pairs(saved) do assert(result[name] ~= nil, 'undeclared saved global: ' .. tostring(name)) end
+        for _, name in ipairs(spec.savedVariables) do I.check(saved[name] ~= nil, 'missing saved global: ' .. name); result[name] = I.copy(saved[name]) end
+        for name in pairs(saved) do I.check(result[name] ~= nil, 'undeclared saved global: ' .. tostring(name)) end
         return result
     end
     local function publish(state, saved)
@@ -43,17 +55,25 @@ SND._install[#SND._install + 1] = function(app)
         if saved then for _, name in ipairs(spec.savedVariables) do _G[name] = saved[name] end end
     end
     function app:Settings(declaration)
-        assert(not spec and not self._ready, 'declare settings once before readiness')
-        assert(type(declaration.adapter) == 'table' and type(declaration.adapter.Restore) == 'function' and type(declaration.adapter.Prepare) == 'function', 'settings adapter required')
-        spec = { adapter = declaration.adapter, fields = I.copy(declaration.fields), savedVariables = I.copy(declaration.savedVariables) }
-        assert(#spec.savedVariables > 0, 'declare saved globals')
+        I.check(not spec and not self._ready and not self._disposed, 'declare settings once before readiness')
+        I.check(I.plain(declaration) and I.plain(declaration.adapter), 'settings declaration and adapter must be plain tables')
+        I.check(type(declaration.adapter.Restore)=='function' and type(declaration.adapter.Prepare)=='function', 'settings adapter requires Restore and Prepare')
+        local candidate = { adapter=I.definition(declaration.adapter), fields=I.copy(declaration.fields), savedVariables=I.copy(declaration.savedVariables) }
+        I.check(I.plain(candidate.fields), 'fields must be a plain table')
+        I.array(candidate.savedVariables, 'savedVariables', true)
         local names = {}
-        for _, name in ipairs(spec.savedVariables) do assert(type(name) == 'string' and name:match('^[%a_][%w_]*$') and not names[name], 'invalid saved name'); names[name] = true end
-        for path, field in pairs(spec.fields) do
-            assert(type(path) == 'string' and path:match('^[%w_]+[.%w_]*$') and not path:find('..',1,true) and path:sub(-1) ~= '.', 'invalid setting path')
-            assert(types[field.type] and fieldValid(field.default, field), 'invalid field declaration: ' .. path)
-            for other in pairs(spec.fields) do assert(other == path or other:sub(1,#path+1) ~= path .. '.', 'overlapping field paths') end
+        for _, name in ipairs(candidate.savedVariables) do I.check(type(name)=='string' and name:match('^[%a_][%w_]*$') and not names[name], 'invalid saved name'); names[name]=true end
+        for path, field in pairs(candidate.fields) do
+            I.check(type(path)=='string' and path:match('^[%w_]+[.%w_]*$') and not path:find('..',1,true) and path:sub(-1)~='.', 'invalid setting path')
+            I.check(I.plain(field) and types[field.type], 'invalid field declaration: '..path)
+            for _, key in ipairs({'min','max','maxLength'}) do I.check(field[key]==nil or V.Number(field[key]), 'field bounds must be finite numbers') end
+            I.check(not field.min or not field.max or field.min<=field.max, 'field min exceeds max')
+            I.check(field.maxLength==nil or (field.maxLength>=0 and field.maxLength==math.floor(field.maxLength)), 'maxLength must be a nonnegative integer')
+            if field.type=='enum' then I.array(field.values, 'enum values', true) end
+            I.check(fieldValid(field.default, field), 'invalid field default: '..path)
+            for other in pairs(candidate.fields) do I.check(type(other)=='string' and (other==path or other:sub(1,#path+1)~=path..'.'), 'overlapping or invalid field paths') end
         end
+        spec = candidate -- Invalid declarations must leave registration retryable.
         store = I.store(self, {}); self._settingsFields = spec.fields; self._settingsStore = store
     end
     function app:_restore()
@@ -62,21 +82,23 @@ SND._install[#SND._install + 1] = function(app)
             local restored = {}
             for _, name in ipairs(spec.savedVariables) do restored[name] = _G[name] end
             -- Saved globals may contain future/legacy data: adapter owns its interpretation.
-            local nextState, normalized = spec.adapter:Restore(I.copy(restored), I.copy(spec.fields))
-            if not nextState then error(type(normalized) == 'table' and normalized.message or normalized or 'restore failed') end
-            nextState = validate(nextState)
-            return nextState, not nextState.readOnly and savedCopy(normalized) or nil
+            local accepted, result = spec.adapter:Restore(I.copy(restored), I.copy(spec.fields))
+            I.check(type(accepted)=='boolean', 'Restore must return a Result tuple')
+            if not accepted then error(I.error('restore', result)) end
+            I.check(I.plain(result), 'Restore result must contain state and saved')
+            local nextState = validate(result.state)
+            return nextState, not nextState.readOnly and savedCopy(result.saved) or nil
         end)
-        if not ok then return false, I.error('restore', tostring(state)) end
+        if not ok then return false, I.error('restore', state) end
         publish(state, saved); return true
     end
     function app:Get(path)
-        assert(self._ready and store and spec.fields[path], 'unknown field or settings not ready')
+        I.check(type(path)=='string' and self._ready and store and spec.fields[path], 'unknown field or settings not ready')
         return I.copy(I.get(current.values, path))
     end
-    function app:SelectSettings(project) assert(store, 'declare settings first'); return store:Select(project) end
+    function app:SelectSettings(project) I.check(store, 'declare settings first'); return store:Select(project) end
     function app:OnSettingsChanged(callback)
-        assert(type(callback) == 'function', 'callback required')
+        I.check(not self._disposed and type(callback) == 'function', 'callback required on a live app')
         local h; h = I.handle(self, function() listeners[h] = nil; h._callback = nil end)
         self._order = self._order + 1; h._order = self._order; h._callback = callback; listeners[h] = true
         return h
@@ -87,13 +109,15 @@ SND._install[#SND._install + 1] = function(app)
         if expectedRevision ~= nil and expectedRevision ~= store._revision then return false, I.error('stale') end
         if current.readOnly and not (operation.kind == 'bind' and current.needsCharacter) then return false, I.error('readOnly') end
         local ok, candidate, failure = I.lock(app, function()
-            local prepared, err = spec.adapter:Prepare(I.copy(current), I.copy(operation), I.copy(spec.fields))
-            if not prepared then return nil, err end
+            local accepted, prepared = spec.adapter:Prepare(I.copy(current), I.copy(operation), I.copy(spec.fields))
+            I.check(type(accepted)=='boolean', 'Prepare must return a Result tuple')
+            if not accepted then return nil, prepared end
+            I.check(I.plain(prepared), 'Prepare result must contain state and saved')
             local state = validate(prepared.state)
             return { state = state, saved = not state.readOnly and savedCopy(prepared.saved) or nil }
         end)
-        if not ok then return false, I.error('invalid', tostring(candidate)) end
-        if not candidate then return false, type(failure) == 'table' and failure or I.error('rejected', failure) end
+        if not ok then return false, I.error('invalid', candidate) end
+        if not candidate then return false, I.error('rejected', failure) end
         if I.equal(current, candidate.state) then return true end
         local keys = {}
         for path in pairs(spec.fields) do if not I.equal(I.get(current.values,path), I.get(candidate.state.values,path)) then keys[path] = true end end
@@ -115,6 +139,8 @@ SND._install[#SND._install + 1] = function(app)
         return true
     end
     function app:Set(path, value, revision)
+        I.check(type(path)=='string' and path~='', 'setting path must be a nonempty string')
+        I.check(I.revision(revision), 'expectedRevision must be a nonnegative integer')
         if not spec or not spec.fields[path] then return false, I.error('unknownField') end
         local ok, valid = pcall(fieldValid, value, spec.fields[path])
         if not ok or not valid then return false, I.error('invalid') end
@@ -131,6 +157,8 @@ SND._install[#SND._install + 1] = function(app)
     for method, kind in pairs({ BindCharacter='bind', Switch='switch', Duplicate='duplicate', CopyFrom='copy', Reset='reset' }) do
         local operation = kind
         profiles[method] = function(_, value)
+            if operation=='bind' then I.check(value~=nil and value~=false, 'character identity required')
+            elseif operation~='reset' then I.check(type(value)=='string' and value~='', 'profile name must be a nonempty string') end
             local capabilities = current and current.profiles or {}
             if not (capabilities.operations and capabilities.operations[operation]) then return false, I.error('unsupported') end
             return commit({ kind=operation, name=operation ~= 'bind' and value or nil, identity=operation == 'bind' and value or nil })

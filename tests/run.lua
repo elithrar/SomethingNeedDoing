@@ -46,6 +46,7 @@ test('settings restoration','reads after ADDON_LOADED and preserves unrecognized
     local a=app(basic);_G[a.name..'DB']={version=99,unknown={7}}
     boot(a);assert(a:IsReady() and a:Get('scale')==1)
     local ok,e=a:Set('scale',1.2);assert(not ok and e.code=='readOnly');assert(_G[a.name..'DB'].unknown[1]==7)
+    local corrupt=app(basic);_G[corrupt.name..'DB']=false;boot(corrupt);assert(corrupt:IsReady() and not corrupt:Set('scale',1.2) and _G[corrupt.name..'DB']==false)
     local b=app(basic);_G[b.name..'DB']={version=1,values={scale=1.5,font='Game tooltip',color={1,1,1},enabled=true}}
     boot(b);assert(b:Get('scale')==1.5)
     local seen=0;b:Scope():Watch(b:SelectSettings(function(values)return values.scale end),function(value)assert(value==_G[b.name..'DB'].values.scale);seen=seen+1 end)
@@ -54,8 +55,8 @@ end)
 
 test('adapter atomicity','an invalid staged result cannot mutate live settings or partially replace multiple globals',function()
     local a=app();local adapter={}
-    function adapter:Restore(saved)return{values={x=1},profiles={operations={reset=true}}},{[a.name..'A']={x=1},[a.name..'B']={x=1}}end
-    function adapter:Prepare(state)state.values.x=999;return{state=state,saved={[a.name..'A']={x=999}}}end
+    function adapter:Restore(saved)return true,{state={values={x=1},profiles={operations={reset=true}}},saved={[a.name..'A']={x=1},[a.name..'B']={x=1}}}end
+    function adapter:Prepare(state)state.values.x=999;return true,{state=state,saved={[a.name..'A']={x=999}}}end
     a:Settings({savedVariables={a.name..'A',a.name..'B'},adapter=adapter,fields={x={type='integer',default=1,min=0,max=10}}});boot(a)
     assert(not a:Set('x',2));assert(a:Get('x')==1 and _G[a.name..'A'].x==1 and _G[a.name..'B'].x==1)
 end)
@@ -64,7 +65,7 @@ test('scope scheduling and hooks','bounds timer replacement and native hook rete
     local a=app();local scope=a:Scope();local calls=0
     scope:After(0,'refresh',function()calls=calls+100 end);scope:After(0,'refresh',function()calls=calls+1 end)
     boot(a);W.tick(.1);assert(calls==1 and a._frame:GetScript('OnUpdate')==nil)
-    local recurring=scope:Every(.2,'tick',function()calls=calls+1 end);W.tick(10);assert(calls==2);recurring:Cancel();assert(a._frame:GetScript('OnUpdate')==nil)
+    local scheduled,recurring=scope:Every(.2,'tick',function()calls=calls+1 end);W.tick(10);assert(scheduled and calls==2);recurring:Cancel();assert(a._frame:GetScript('OnUpdate')==nil)
     local target={Do=function()end};local before=W.hooks
     for i=1,5 do local owner=a:Scope();owner:PostHook(target,'Do',function()calls=calls+1 end);target.Do();owner:Cancel();target.Do()end
     assert(W.hooks==before+1 and calls==7)
@@ -100,7 +101,7 @@ test('font and geometry native boundaries','accepts void SetFont results and cla
     local rejecting=UIParent:CreateFontString();rejecting.rejectFont='Fixture.ttf';assert(a.fonts:Apply(rejecting,'body'))
     assert(label.font=='Fonts\\FRIZQT__.TTF' and rejecting.font=='Fonts\\FRIZQT__.TTF');LibStub=nil
     local f=CreateFrame('Frame',nil,UIParent);f:SetSize(100,100);f:SetScale(2);f.left=700;f.bottom=-50
-    local h=a.layout:KeepOnScreen(f,{margin=10});assert(h);assert(f.left==535 and f.bottom==5)
+    local placed,h=a.layout:KeepOnScreen(f,{margin=10});assert(placed);assert(f.left==535 and f.bottom==5)
     f.protected=true;assert(not h:Refresh());assert(not a.layout:KeepOnScreen(f));h:Cancel()
 end)
 
@@ -112,4 +113,74 @@ test('diagnostics and instance isolation','bounded logs and per-app ownership pr
     assert(a:Slash('/sndfixture',function()end));local h,e=b:Slash('/sndfixture',function()end);assert(not h and e.code=='collision')
     local late=0;a:OnReady(function()late=late+1 end);assert(late==0);W.tick(.1);assert(late==1)
 end)
+test('Lua value and return boundaries','extra Lua returns and shared table aliases must not corrupt selector copying',function()
+    local a=app();boot(a);local shared={x=1};local s=a:State({left=shared,right=shared})
+    shared.x=9;assert(s:Read().left.x==1)
+    local calls=0;a:Scope():Watch(s:Select(function(v)return{left=v.left.x},'extra',nil end),function(value)calls=calls+1;assert(value.left==calls)end)
+    assert(calls==1);assert(s:Update(function(v)v.left.x=2 end));assert(s:Read().right.x==1 and calls==2)
+    assert(not s:Update(function(v)v.loop=v end))
+    local ok,one,two,three
+    local sdk=W.load('ReturnFixture');local b=sdk:NewAddon('ReturnFixture')
+    ok,one,two,three=sdk._.call(b,function()return false,nil,'tail'end)
+    assert(ok and one==false and two==nil and three=='tail')
+end)
+
+test('declaration ownership and dense arrays','sparse lists must fail visibly and caller edits cannot mutate registered definitions',function()
+    local a=app(basic)
+    local bad={pages={[1]={id='one'},[3]={id='three'}}}
+    local ok,e=pcall(function()a:Options(bad)end);assert(not ok and e:find('SND:',1,true))
+    assert(not pcall(function()a:Options({pages={{id='bad',sections=false}}})end))
+    local wrong={pages={{id='wrong',sections={{controls={{type='checkbox',key='scale',label='Wrong'}}}}}}}
+    assert(not pcall(function()a:Options(wrong)end))
+    local declaration={pages={{id='one',sections={{controls={{type='font',key='font',label='Font'}}}}}}}
+    local panel=a:Options(declaration);declaration.pages[1].id='changed';declaration.pages[1].sections[1].controls[1].key='missing'
+    boot(a);assert(panel:Open('one'));panel:Close()
+    local b=app();local settings=basic(b.name);settings.savedVariables={[1]='One',[3]='Three'}
+    assert(not pcall(function()b:Settings(settings)end));settings=basic(b.name);b:Settings(settings)
+    settings.fields.scale.max=0;settings.adapter.Restore=function()error('caller replaced adapter')end
+    boot(b);assert(b:IsReady() and b:Set('scale',1.5))
+    local c=app();settings=basic(c.name);settings.fields.choice={type='enum',default='a',values={[1]='a',[3]='c'}}
+    assert(not pcall(function()c:Settings(settings)end))
+end)
+
+test('structured error containment','arbitrary Lua error values cannot escape recovery or leak mutable error references',function()
+    local a=app();boot(a);local s=a:State({x=1})
+    local hostile=setmetatable({}, {__tostring=function()error('must not format')end,__index=function()error('must not index')end})
+    local survived,ok,err=pcall(function()return s:Update(function()error(hostile)end)end)
+    assert(survived and ok==false and type(err.code)=='string' and type(err.message)=='string')
+    local original={code='domain',message='Rejected'}
+    ok,err=s:Update(function()return false,original end);assert(not ok and err~=original and err.code=='domain')
+    original.message='mutated';assert(err.message=='Rejected' and s:Read().x==1)
+    local malformed={code={},message=false};ok,err=s:Update(function()return false,malformed end)
+    assert(not ok and type(err.code)=='string' and type(err.message)=='string')
+    a:Scope():Watch(s:Select(function(v)return v.x end),function()error({code='view',message='View failed'})end)
+    local logs=a.log:Entries();assert(logs[#logs].message=='View failed')
+end)
+
+test('Result tuples and argument errors','all fallible resource APIs share a boolean discriminant; invalid API usage fails before mutation',function()
+    local a=app();boot(a);local scope=a:Scope()
+    local ok,h=scope:After(0,'timer',function()end);assert(ok==true and type(h.Cancel)=='function');h:Cancel()
+    local unsupported,reason=a.fonts:Apply(42,'body');assert(unsupported==false and reason.code=='invalid')
+    unsupported,reason=a.layout:KeepOnScreen({});assert(unsupported==false and reason.code=='unavailable')
+    local failed,err=scope:Every(0,'bad',function()end);assert(failed==false and err.code=='invalid')
+    failed,err=scope:PostHook({},'Absent',function()end);assert(failed==false and err.code=='unavailable')
+    ok,h=scope:Event('PLAYER_LOGIN',function()end);assert(ok==true and type(h.Cancel)=='function');h:Cancel()
+    ok,h=a:Slash('/resultfixture',function()end);assert(ok==true and type(h.Cancel)=='function');h:Cancel()
+    local state=a:State({value=false});local passed,empty=state:Update(function(v)v.value=false end);assert(passed==true and empty==nil)
+    assert(not pcall(function()scope:After(1,0/0,function()end)end))
+    assert(not pcall(function()a:Scope(false)end))
+    assert(not pcall(function()scope:Watch(nil,function()end)end))
+    assert(not pcall(function()state:Update(function()end,'revision')end))
+    local native=a._frame.RegisterEvent;a._frame.RegisterEvent=function()error({message='bad event'})end
+    failed,err=scope:Event('BAD_EVENT',function()end);a._frame.RegisterEvent=native
+    assert(failed==false and err.message=='bad event')
+    local cleanup=a:Scope();local fired=0
+    cleanup:Event('CLEANUP_TEST',function()fired=fired+1 end)
+    cleanup:After(1,'cleanup',function()fired=fired+1 end)
+    local unregister=a._frame.UnregisterEvent;a._frame.UnregisterEvent=function()error('native cleanup failed')end
+    cleanup:Cancel();a._frame.UnregisterEvent=unregister
+    W.tick(2);W.event('CLEANUP_TEST');assert(fired==0)
+
+end)
+
 print('PASS '..total..' focused tests')

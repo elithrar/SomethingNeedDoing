@@ -1,6 +1,6 @@
 {
   "name": "somethingneeddoing",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A microframework for building World of Warcraft addons. Registration, options panels & window chrome, font handling, slash commands, event handling & logging.",
   "author": {
     "name": "Matt Silverlock",

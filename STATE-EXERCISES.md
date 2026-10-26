@@ -1,4 +1,4 @@
-# Three-consumer exercise: SND 0.1.0
+# Three-consumer exercise: SND 0.2.0
 
 [exercises/run.lua](exercises/run.lua) now loads the **real SND runtime**, the small native-boundary fixture in [tests/wow.lua](tests/wow.lua), and actual domain modules from the pinned revisions in [EXTRACTION-AUDIT.md](EXTRACTION-AUDIT.md). The disposable design-model implementation has been removed. Run instructions are in [README.md](README.md#develop-and-verify).
 
@@ -31,4 +31,14 @@ The small API was sufficient for these paths: State/Read/Update/Select/Watch/Sel
 - Native rendering, dropdown/picker interaction, client UI scale/notch behavior, protected-frame restrictions and mixed-version coexistence need in-game acceptance. A mocked Frame cannot establish those properties.
 - Geometry helpers react to show, size and display changes. Consumers call a placement handle's Refresh after moving an anchor; there is no permanent position polling.
 
-**Every interface needs at least two implementations** remains a stabilization rule. The exercised state/profile/component interfaces have concrete multi-consumer evidence; other UI services have focused native-boundary tests and source evidence, not two completed production migrations. Treat 0.1.0 as the initial implementation, with that distinction intact.
+**Every interface needs at least two implementations** remains a stabilization rule. The exercised state/profile/component interfaces have concrete multi-consumer evidence; other UI services have focused native-boundary tests and source evidence, not two completed production migrations. Treat 0.2.0 as the initial implementation, with that distinction intact.
+
+## 0.2 API/DX review before publication
+
+All three integrations were rerun before publishing the breaking Result changes. XP's account/identity adapter and ATCF's per-character adapter now share `Restore`/`Prepare` success payloads (`{ state, saved }`). FAU uses the runnable single-settings adapter and keeps its domain shortlist command contract local. SND does not force external add-on models to adopt a new return convention.
+
+ATCF's search mock now also runs through the real keyed timer scheduler: it checks `ok, timer`, rejects a stale external completion and preserves active navigation when the current scheduled search completes. XP checks the structured read-only error before character binding. FAU and ATCF still reuse the same visible-page ownership contract without additional widget methods.
+
+The review covered bootstrap/readiness, state snapshots/selectors, field and profile adapters, options declarations/custom components, scope scheduling/hooks, typography/layout and diagnostics. Changes were limited to explicit Result tuples, dense-list validation, copied declarations and safe error normalization. Getters and infallible registrations retain direct values. No wrapper objects, map/unwrap combinators, new persistence registry or consumer-domain abstraction was needed.
+
+Native client validation and full historical schema migrations remain outstanding; these mocks establish API fit, not in-game acceptance.

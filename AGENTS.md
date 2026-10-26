@@ -51,6 +51,8 @@ Use `key` bindings for standard options controls. For bespoke content, use a cus
 - **Every interface needs at least two implementations.** Before stabilizing a shared interface, demonstrate it in two independently useful consumer integrations. Exercise all three add-ons where relevant. Two toy tests are not two integrations.
 - Keep Lua 5.1 and the explicit client target. No dependency on another installed add-on or process-wide “latest version wins” library state.
 - Validate staged state before publication. Failed adapters cannot mutate live globals. Unknown future schemas must remain untouched; restoration may fail explicitly rather than guess.
+- Fallible APIs and persistence adapters return `true, value` / `false, { code, message }`. Commands have a nil success payload. Do not infer failure from the payload, or add wrapper/combinator APIs without two concrete uses. Programmer errors raise; asynchronous callback errors are reported. See API.md for the exact boundary.
+- Validate dense arrays before ipairs; copy declaration tables before installation. Never format arbitrary error objects or rely on shared-reference identity in copied state.
 - Success means committed. Reentrant writes from transactions or notifications fail; schedule intentional follow-up explicitly through the existing scope scheduler.
 - Preserve cancellation during dispatch and release callback references. Secure hooks cannot be unhooked; retain inert dispatchers, not subscribers.
 - Never regenerate an open native menu. Color previews are transient and must not persist; old callbacks cannot target a new profile/editor.
