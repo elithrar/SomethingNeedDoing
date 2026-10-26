@@ -92,6 +92,10 @@ XPIsland's [font pipeline][x-ui] checks real native font readback, reconciles a 
 | Settings.Character, Sample, Timing | Build-scoped discoveries, learned flight durations, saved places and route intent are character-domain data, not appearance profiles. |
 | Settings adapter | All three TOC variables are per-character. Keep that scope; ATCF's `Default` profile must not silently become XPIsland's account-shared `Shared` profile. |
 
+## Reactive state follow-up
+
+The [state API](API.md#3a-small-reactive-state) now proposes explicit Update/Select/Watch propagation. [Three executable exercises](STATE-EXERCISES.md) load actual domain modules from the pinned revisions above and test small UI-state bridges. Propagation, defensive snapshots, revision checks, and subscription ownership move to SND; domain authority, metadata invalidation, search generations, checkpoint timing, and gameplay state machines stay local. This refines the propagation boundary without changing the bespoke classifications above. The exercise model is not a shipped runtime or completed consumer migration.
+
 ## Tests to move, adapt, or retain
 
 Transfer assertions and scenarios with their attribution, not the entire add-on mock runtime. SND needs its own small client test adapter. Keep end-to-end regressions in consumers to catch bad integration even when the shared component passes.
