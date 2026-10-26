@@ -1,3 +1,8 @@
+-- Optional sibling-source checks; no native client or complete consumer migration.
+-- Domain baselines (these modules are unchanged in the SND migration PRs):
+-- XPIsland f2b9dcdc4da2d8c07815934746622035ad6329f6
+-- FindAnUpgrade 89fcaeca4d0b283cdb0de89775bbf3ad52c80b6d
+-- AsTheCrowFlies 3d02ab66b5ff836d9215f09674e2a6c371982224
 -- Three real domain modules with mock controllers/UI, using the production SND runtime.
 local W=dofile('tests/wow.lua')
 local examples={};assert(loadfile('examples/SettingsAdapter.lua'))('Examples',examples)
@@ -108,3 +113,15 @@ end
 assert(xp:Get('scale')==1 and atcf:Get('scale')==1 and fau:Get('scale')==1)
 print('PASS ATCF: separate profile layout, stale search suppression, active navigation preservation')
 print('PASS FAU + ATCF: custom page subscription rebinding and hidden idle behavior')
+
+-- Two different shutdown responsibilities use the same event contract.
+local checkpoint,stopped
+assert(xp:Scope():Event('PLAYER_LOGOUT',function()
+    assert(xp:IsReady());checkpoint=XP.Copy(tracker.session)
+end))
+assert(atcf:Scope():Event('PLAYER_LOGOUT',function()
+    assert(atcf:IsReady());stopped=true -- consumer's native navigation ticker cancellation
+end))
+W.event('PLAYER_LOGOUT')
+assert(checkpoint and checkpoint.total==50 and stopped and not xp:IsReady() and not atcf:IsReady())
+print('PASS XPIsland + ATCF: checkpoint and native-timer cleanup before disposal')

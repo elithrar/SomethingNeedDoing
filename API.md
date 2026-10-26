@@ -1,6 +1,6 @@
-# SomethingNeedDoing API — 0.2.0
+# SomethingNeedDoing API — 0.3.0
 
-**Status: initial implementation, version 0.2.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
+**Status: initial implementation, version 0.3.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
 SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
@@ -42,7 +42,7 @@ end)
 | `app:Scope(name) -> scope` | Create an active owner for subscriptions and work. Duplicate live names are rejected; a canceled name can be reused with a new identity. |
 | `app:Slash(command, callback) -> ok, subscriptionOrError` | Register an explicit slash command; callback receives the unmodified argument string. Reject collisions rather than overwriting another owner. |
 
-Settings declarations must happen before restoration. Ordinary scoped subscriptions become active after `OnReady`; internal bootstrap uses its own event owner. Logout disposes owned runtime work without rewriting domain checkpoints. There is no implicit restart, enable/disable lifecycle, or guarantee that a module is safe merely because `OnReady` ran.
+Settings declarations must happen before restoration. Ordinary scoped subscriptions become active after `OnReady`; internal bootstrap uses its own event owner. On `PLAYER_LOGOUT`, active scoped logout subscribers run once, in registration order, while the app is still ready and committed settings remain readable. Callback errors are reported without preventing subsequent subscribers or disposal. Ordinary cancellation rules still apply. SND then closes editors and cancels owned work, including work scheduled during logout. Recursive or repeated logout delivery is ignored. No checkpoint runs if restoration never succeeded; SND does not invent domain checkpoint policy or promise a disk flush. There is no implicit restart, enable/disable lifecycle, or guarantee that a module is safe merely because `OnReady` ran.
 
 ### Result and exception contract
 
@@ -136,7 +136,7 @@ On restore, normalized globals are installed only for a writable state. Future s
 
 ## 3a. Small reactive state
 
-**Design rule: every interface needs at least two consumer implementations.** Exercise shared contracts against concrete behavior in at least two add-ons before stabilizing them; use all three where applicable. Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable exercises and findings](STATE-EXERCISES.md).
+**Design rule: every interface needs at least two consumer implementations.** Exercise shared contracts against concrete behavior in at least two add-ons before stabilizing them; use all three where applicable. Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable consumer checks](tests/consumers.lua). The production consumer PRs exercise lifecycle, hooks and commands; they do not establish production settings/options coverage.
 
 State propagation is explicit: **Update → Select → Watch**. There is no metatable-based property tracking, global store, automatic effect retry, or reactive gameplay state machine.
 
@@ -231,7 +231,7 @@ app.profiles:Reset()
 | `profiles:CopyFrom(name)` | Replace active settings from another profile, retaining the active name. |
 | `profiles:Reset()` | Reset the active settings to validated defaults. |
 
-Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.2.0.
+Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.3.0.
 
 Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This replaces preview-then-rollback writes; the focused picker test covers native hide-before-accept and stale callbacks.
 
@@ -311,6 +311,10 @@ Initially the font service binds to the optional schema keys `font` and `fontSiz
 
 The initial theme uses the existing gray dialog border, dark controls, gold hover/selection accents, and native control artwork. App-specific font defaults and content sizing survive migration; adopting SND does not change ATCF's Expressway preference into XPIsland's tooltip font by accident.
 
+Font tracking starts on the first `Apply`, `Entries` or `Refresh` call. Calls made before readiness queue activation until restoration; first use after readiness activates immediately. `Measure` is a passive read and does not subscribe to media events. Unused font services perform no media lookup or registration. Media callbacks use the same guarded lifetime and error reporting as other owned callbacks.
+
+Layout display subscriptions exist only while layout handles are active. Cancel the returned handle when an owned window no longer needs tracking; canceling the final handle removes these subscriptions. Partial registration failure cancels that attempt and returns an error. Neither service needs an enable flag or an extra initialization method. Disposed apps cannot start new services.
+
 ## 7. Events, hooks, and scheduling
 
 ```lua
@@ -338,6 +342,17 @@ scope:Cancel()
 
 All subscriptions and timer handles expose idempotent `Cancel()`. Cancellation during dispatch suppresses later callbacks belonging to canceled subscriptions. Registration never unregisters another add-on's events. Secure/script hooks cannot truly be removed: an inert dispatcher remains, with subscribers detached; repeated attach/detach must not stack native hooks.
 
+Use the existing event API for a domain checkpoint or native timer cleanup:
+
+```lua
+local ok, err = scope:Event("PLAYER_LOGOUT", function()
+    ns.Session:Checkpoint() -- consumer-owned policy and SavedVariables
+end)
+if not ok then app.log:Error(err.message) end
+```
+
+For a group of optional hooks, create a fresh unnamed scope for each attachment attempt. Check every registration Result; on failure, cancel the attempt before reporting or retrying. This detaches partial subscribers while keeping native dispatchers reusable. Mark the integration attached only after every registration succeeds. Retry policy and combat/native-UI availability remain consumer decisions; a separate hook transaction API is unnecessary.
+
 There is no generic `Call(fn)` that discards errors or silently changes return arity. Scope guards reject obsolete owners, but request IDs, content identity, provider revisions, retry budgets, and which events invalidate data still belong to the add-on. Use a fresh scope for a new request generation where appropriate.
 
 Recurring work uses an owned scheduler with no permanently ticking idle driver. Preserve authoritative add-on clocks and existing coalescing semantics when adopting it. Missing optional hook targets return `unavailable`; the consumer decides whether an `ADDON_LOADED` retry is warranted.
@@ -358,7 +373,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Verification and remaining integration gates
 
-The implementation is covered by [focused contract tests](tests/README.md), each with an explicit failure-risk justification, and [three consumer mocks](STATE-EXERCISES.md) against the real runtime. The consumer mocks additionally load original domain modules at pinned revisions. They do not migrate the shipping add-ons.
+The implementation is covered by [focused contract tests](tests/run.lua), each with an explicit failure-risk justification, and [three consumer mocks](tests/consumers.lua) against the real runtime. The consumer mocks additionally load original domain modules from the documented source baselines. They do not migrate the shipping add-ons.
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 

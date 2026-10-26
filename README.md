@@ -19,7 +19,7 @@ add-on's behavior in the add-on. SND grew out of
 [AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
 consumers with enough shared plumbing to justify a small library.
 
-Version **0.2.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
+Version **0.3.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
 required third-party dependencies. LibSharedMedia is used when available.
 
 ## Contents
@@ -250,24 +250,24 @@ With Lua 5.1 and Python 3 installed, run:
 ```sh
 python3 tools/check.py
 lua5.1 tests/run.lua
-lua5.1 exercises/run.lua
+lua5.1 tests/consumers.lua
 ```
 
 The focused contract suite is self-contained. Each test includes a short
-[justification](tests/README.md) explaining the failure it prevents. The metadata
-check catches version, load-order and local documentation-link drift.
+justification explaining the failure it prevents. The metadata check catches
+version, load-order and local documentation-link drift.
 
-The consumer exercise requires sibling checkouts of the three add-ons at the
-revisions in [EXTRACTION-AUDIT.md](EXTRACTION-AUDIT.md). It loads their real domain
-modules and the actual SND runtime, with mock controllers and UI. See
-[STATE-EXERCISES.md](STATE-EXERCISES.md) for the findings and remaining gaps.
+The optional [consumer checks](tests/consumers.lua) require sibling checkouts of
+XPIsland, FindAnUpgrade and AsTheCrowFlies. They load real domain modules with
+mock controllers and UI. They are design evidence, not complete migrations of
+the add-ons' settings or options. Source baselines are recorded beside the checks.
 
 If you're using Python with Lupa instead of a Lua executable, use
-`python tests/run.py` and `python tests/run.py exercises/run.lua`. Both select
+`python tests/run.py` and `python tests/run.py tests/consumers.lua`. Both select
 Lua 5.1 explicitly. CI runs the self-contained suite; it doesn't require access
 to private consumer repositories.
 
-Version 0.2.0 has offline contract and consumer-mock validation. Native rendering,
+Offline contract and consumer-mock checks cover the runtime. Native rendering,
 menu/picker input, combat restrictions and mixed-version coexistence still need
 in-game acceptance on the target client. The mocks aren't migrations of the
 shipping add-ons.

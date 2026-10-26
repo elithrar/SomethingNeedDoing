@@ -1,6 +1,6 @@
 local _, ns = ...
 assert(type(ns) == "table" and ns.SomethingNeedDoing == nil, "SND must load once into the consumer namespace")
-local SND = { VERSION = "0.2.0", Values = {}, Pages = {}, _install = {} }
+local SND = { VERSION = "0.3.0", Values = {}, Pages = {}, _install = {} }
 ns.SomethingNeedDoing = SND
 local I = {}; SND._ = I
 local V = SND.Values
@@ -153,16 +153,23 @@ function SND:NewAddon(name, spec)
     end
     function app:_dispose()
         if self._disposed then return end
-        if self._panel then self._panel:Close() end
         self._disposed = true; self._ready = false
+        if self._panel then I.call(self, self._panel.Close, self._panel) end
         for _, scope in pairs(self._scopes) do scope:Cancel() end
         for _, h in ipairs(I.snapshot(self._handles)) do h:Cancel() end
         self._pending = {}; self._stores = {}
         frame:UnregisterAllEvents(); frame:SetScript('OnUpdate', nil)
     end
     frame:SetScript('OnEvent', function(_, event, ...)
-        if event == 'ADDON_LOADED' and (...) == name then app:_boot()
-        elseif event == 'PLAYER_LOGOUT' then app:_dispose() end
+        if event == 'PLAYER_LOGOUT' then
+            if app._stopping or app._disposed then return end
+            app._stopping = true
+            -- Checkpoints observe committed state before scopes and editors are disposed.
+            if app._dispatchEvent then app:_dispatchEvent(event, ...) end
+            app:_dispose()
+            return
+        end
+        if event == 'ADDON_LOADED' and (...) == name then app:_boot() end
         if app._dispatchEvent then app:_dispatchEvent(event, ...) end
     end)
     for _, install in ipairs(self._install) do install(app) end

@@ -183,4 +183,91 @@ test('Result tuples and argument errors','all fallible resource APIs share a boo
 
 end)
 
+
+test('logout checkpoint and disposal','checkpoints must run once before cleanup, even with recursive delivery and throwing callbacks or native UI cleanup',function()
+    local a=app(basic);local scope=a:Scope();local checkpoint,stopped,late=0,0,0
+    local panel=a:Options({pages={{id='one',sections={}}}})
+    boot(a);assert(panel:Open());assert(a:Set('scale',1.5))
+    panel.frame.Hide=function()error('native hide failed')end
+    assert(a:Slash('/shutdownfixture',function()late=late+1 end))
+    local target={Run=function()end};assert(scope:PostHook(target,'Run',function()late=late+1 end))
+    assert(scope:Event('PLAYER_LOGOUT',function()
+        assert(a:IsReady() and a:Get('scale')==1.5);checkpoint=checkpoint+1
+        W.event('PLAYER_LOGOUT') -- Synchronous nested delivery cannot checkpoint twice.
+        assert(scope:After(0,'late',function()late=late+1 end))
+    end))
+    assert(scope:Event('PLAYER_LOGOUT',function()error('checkpoint subscriber failed')end))
+    assert(scope:Event('PLAYER_LOGOUT',function()stopped=stopped+1 end))
+    W.event('PLAYER_LOGOUT');W.event('PLAYER_LOGOUT');W.tick(1);target.Run()
+    assert(checkpoint==1 and stopped==1 and late==0 and not a:IsReady())
+    assert(not SlashCmdList[a.name:upper()..'_SND_SHUTDOWNFIXTURE'])
+    assert(not a._frame:GetScript('OnUpdate') and not next(a._frame.events))
+    local errors=a.log:Entries();assert(#errors==2)
+    assert(errors[1].message:find('checkpoint subscriber failed',1,true) and errors[2].message:find('native hide failed',1,true))
+end)
+
+test('lazy font ownership','unused services must stay idle while preboot, late-media, retry and disposed callbacks retain correct ownership',function()
+    local registrations,lookups=0,0;local receivers={};local fail=false
+    local lib={List=function()return{'Later'}end,Fetch=function()return'Later.ttf'end}
+    lib.RegisterCallback=function(receiver,event,method)
+        registrations=registrations+1;receivers[#receivers+1]=receiver
+        if fail then error('partial media registration') end
+        assert(event=='LibSharedMedia_Registered' and method=='Changed')
+    end
+    -- No unregister API: stale native callbacks still must be inert.
+    LibStub=function()lookups=lookups+1;return lib end
+    local a=app(basic);boot(a)
+    local text=UIParent:CreateFontString();a.fonts:Measure(text)
+    assert(lookups==0 and registrations==0 and not a._frame.events.UI_SCALE_CHANGED)
+    local b=app(basic);assert(b.fonts:Apply(text,'body'));assert(registrations==0)
+    _G[b.name..'DB']={version=1,values={scale=1,font='Later',color={1,1,1},enabled=true}}
+    boot(b);assert(registrations==1 and text.font=='Later.ttf')
+    b.fonts:Entries();b.fonts:Apply(text,'body');assert(registrations==1)
+    local late=UIParent:CreateFontString();fail=true
+    assert(a.fonts:Apply(late,'body'));assert(registrations==2)
+    fail=false;W.event('ADDON_LOADED','MediaRetry');assert(registrations==3)
+    assert(a:Set('font','Later'));late.rejectFont='Later.ttf';a.fonts:Refresh();assert(late.font~='Later.ttf')
+    late.rejectFont=nil;receivers[#receivers]:Changed('LibSharedMedia_Registered','font');assert(late.font=='Later.ttf')
+    -- A partial registration must not leave an extra active callback.
+    local refreshes=0;local refresh=a.fonts.Refresh
+    a.fonts.Refresh=function(self)refreshes=refreshes+1;return refresh(self)end
+    receivers[2]:Changed('LibSharedMedia_Registered','font');assert(refreshes==0)
+    W.event('PLAYER_LOGOUT');for _,receiver in ipairs(receivers)do receiver:Changed('LibSharedMedia_Registered','font')end
+    assert(refreshes==0 and not pcall(function()a.fonts:Entries()end))
+    LibStub=nil
+    local c=app(basic);boot(c);local missing=UIParent:CreateFontString()
+    assert(c:Set('font','Later'));assert(c.fonts:Apply(missing,'body'));assert(missing.font~='Later.ttf')
+    LibStub=function()return lib end;W.event('ADDON_LOADED','LateMedia');assert(missing.font=='Later.ttf')
+    W.event('PLAYER_LOGOUT');LibStub=nil
+end)
+
+test('lazy layout ownership','tracking must start on demand and release display listeners after cancellation or partial hook failure',function()
+    local a=app();boot(a);assert(not a._frame.events.DISPLAY_SIZE_CHANGED)
+    local frame=CreateFrame('Frame',nil,UIParent)
+    local ok,first=a.layout:KeepOnScreen(frame);assert(ok and a._frame.events.DISPLAY_SIZE_CHANGED)
+    local _,second=a.layout:KeepOnScreen(CreateFrame('Frame',nil,UIParent))
+    first:Cancel();assert(a._frame.events.DISPLAY_SIZE_CHANGED)
+    second:Cancel();assert(not a._frame.events.DISPLAY_SIZE_CHANGED)
+    local bad=CreateFrame('Frame',nil,UIParent);local hook=bad.HookScript
+    bad.HookScript=function(self,event,callback)if event=='OnDragStart'then error('native hook unavailable')end;return hook(self,event,callback)end
+    local failed,err=a.layout:KeepOnScreen(bad);assert(not failed and err.code=='unavailable' and not a._frame.events.DISPLAY_SIZE_CHANGED)
+    W.event('PLAYER_LOGOUT');assert(not pcall(function()a.layout:KeepOnScreen(frame)end))
+end)
+
+test('executable consumer settings ownership','the shipped example must restore old fields, bind its view, and cancel previews without persisting them',function()
+    local name='ConsumerExample';local ns={SomethingNeedDoing=W.load(name)}
+    assert(loadfile('examples/SettingsAdapter.lua'))(name,ns)
+    ExampleDB={version=1,values={scale=1.25,font='Game tooltip'}} -- predates the example's tint field
+    assert(loadfile('examples/Consumer.lua'))(name,ns)
+    assert(not ns.Preview);W.event('ADDON_LOADED',name)
+    assert(ns.app:IsReady() and ns.Preview.scale==1.25 and ExampleDB.values.tint[1]==.2)
+    assert(ns.app:Set('scale',1.5));assert(ns.Preview.scale==1.5 and ExampleDB.values.scale==1.5)
+    local panel=ns.app._panel;assert(panel:Open())
+    local button=panel._pool['appearance:1:3'];button.scripts.OnClick()
+    W.color(.8,.7,.6,false,false);assert(ns.Preview.background[1]==.8 and ExampleDB.values.tint[1]==.2)
+    W.color(.8,.7,.6,true,true);assert(ns.Preview.background[1]==.2 and ExampleDB.values.tint[1]==.2)
+    assert(ns.app.profiles:Reset());assert(ns.Preview.scale==1 and ExampleDB.values.scale==1)
+    W.event('PLAYER_LOGOUT');ExampleDB=nil
+end)
+
 print('PASS '..total..' focused tests')

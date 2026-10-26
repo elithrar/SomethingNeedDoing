@@ -1,6 +1,6 @@
 {
   "name": "somethingneeddoing",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A microframework for building World of Warcraft addons. Registration, options panels & window chrome, font handling, slash commands, event handling & logging.",
   "author": {
     "name": "Matt Silverlock",
@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "test": "lua5.1 tests/run.lua",
-    "test:consumers": "lua5.1 exercises/run.lua",
+    "test:consumers": "lua5.1 tests/consumers.lua",
     "check": "python3 tools/check.py"
   },
   "snd": {
