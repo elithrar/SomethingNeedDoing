@@ -3,24 +3,19 @@
 [![Tests](https://github.com/elithrar/SomethingNeedDoing/actions/workflows/test.yml/badge.svg)](https://github.com/elithrar/SomethingNeedDoing/actions/workflows/test.yml)
 
 SomethingNeedDoing (SND) is a microframework for building World of Warcraft
-add-ons. It provides the parts you tend to write more than once:
+add-ons. It provides:
 
 - Options panels with bound controls, tabs, profiles, fonts and window chrome.
-- A small state API for updating a model and propagating changes to its views.
-- Scoped events, hooks and timers that stop calling your code when their owner
-  goes away.
-- Settings adapters for existing SavedVariables, slash commands, screen bounds
-  and bounded logging.
+- Reactive state that propagates changes to views.
+- Scoped events, hooks and timers.
+- SavedVariables adapters, slash commands, screen bounds and logging.
 
-The goal is to make those parts consistent and easy to use, while leaving the
-add-on's behavior in the add-on. SND grew out of
-[XPIsland](https://github.com/elithrar/XPIsland),
+SND grew out of [XPIsland](https://github.com/elithrar/XPIsland),
 [FindAnUpgrade](https://github.com/elithrar/FindAnUpgrade) and
-[AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
-consumers with enough shared plumbing to justify a small library.
+[AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies).
 
-Version **0.4.1** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
-required third-party dependencies. LibSharedMedia is used when available.
+**Targets World of Warcraft Forever only.** No required dependencies;
+LibSharedMedia is optional.
 
 ## Contents
 
@@ -34,9 +29,8 @@ required third-party dependencies. LibSharedMedia is used when available.
 
 ## Installation
 
-Vendor a pinned SND source tree into `YourAddon/Libs/SomethingNeedDoing/`,
-including its documentation, examples, tests and tooling. Only the runtime files
-are loaded by WoW; load SND before your add-on’s modules:
+Vendor a pinned SND source tree into `YourAddon/Libs/SomethingNeedDoing/`.
+Load `Embed.xml` before your add-on's modules in its TOC:
 
 ```text
 ## Interface: 16001
@@ -46,29 +40,16 @@ Libs\SomethingNeedDoing\Embed.xml
 Core.lua
 ```
 
-Pin the SND version or commit you ship. Each add-on gets its own instance,
-loaded into the namespace WoW supplies to its files. Users don't need to install
-SND separately, and one add-on updating its copy doesn't update another's.
-
-[package.json](package.json) records the version, license, author and Lua load
-order. It's metadata: you don't need Node.js, npm or LuaRocks to use SND in WoW.
-
-For agent-assisted development, keep [API.md](API.md) and [AGENTS.md](AGENTS.md)
-from your pinned SND revision available in your development checkout. A vendored
-`AGENTS.md` may not apply outside its directory; add this to your root guidance,
-with paths to that copy:
-
-> For SND integration and native UI changes, read SND's API.md and AGENTS.md. Preserve this add-on's client target, persistence rules and gameplay behavior.
+For agent-assisted development, point your root `AGENTS.md` to the vendored
+[API.md](API.md) and [AGENTS.md](AGENTS.md). Keep them at the same pinned revision.
 
 ## Examples
 
-These examples cover common uses. For the full structured API reference, see
-[API.md](API.md).
+For the full API reference, see [API.md](API.md).
 
 ### An options panel
 
-Here's the common case: a couple of saved settings and a panel to edit them.
-Put this in `Core.lua`:
+Declare settings and SND supplies the controls and Profiles page. In `Core.lua`:
 
 ```lua
 local ADDON, ns = ...
@@ -82,8 +63,7 @@ app:Settings({
     },
 })
 
-local options = app:Options() -- Settings controls and a Profiles page.
-
+local options = app:Options()
 local registered, err = app:Slash("/youraddon", function()
     local opened, failure = options:Toggle()
     if not opened then app.log:Warn(failure.message) end
@@ -91,178 +71,71 @@ end)
 if not registered then app.log:Warn(err.message) end
 ```
 
-The controls read their bounds and defaults from the field declarations. A
-successful edit validates and commits the setting before notifying its views.
-You can observe those same settings to update the rest of your add-on:
+Settings restore after `ADDON_LOADED`; player and world readiness remain the
+add-on's responsibility. Existing databases need a
+[migration adapter](examples/SettingsAdapter.lua). The TOC determines whether
+saved profiles are account-wide or per-character.
+
+### Appearance
+
+Modern and WoW Forever themes apply across owned UI surfaces. Register frames,
+fonts and semantic colors separately so font changes preserve product colors:
 
 ```lua
-app:OnReady(function()
-    local view = app:Scope("appearance")
-    view:Watch(app:SelectSettings(function(values)
-        return values.scale
-    end), function(scale)
-        ns.window:SetScale(scale) -- Your add-on's owned, unprotected window.
-    end)
-end)
-```
-
-`OnReady` runs after the add-on's SavedVariables have been restored. It doesn't
-mean that player identity or world APIs are ready; those still belong to your
-add-on's initialization.
-
-SND supplies versioned profile storage when you omit `adapter`. Existing add-ons
-can provide an adapter for their current schema and migrations; see
-[examples/SettingsAdapter.lua](examples/SettingsAdapter.lua). Your TOC determines
-whether the saved data is account-wide or per-character. Use explicit options
-pages when you want to control grouping, labels and layout.
-
-### Appearance across your add-on
-
-Modern and WoW Forever presets supply shared surface, border, accent, text and
-muted colors. A `theme` setting selects the active definition. Fonts and styles
-apply to any registered, add-on-owned surface—not just the options panel.
-
-```lua
--- Declare before readiness. Omit this to use the two built-in presets.
-app:Appearance({
-    defaultTheme = "modern",
-    themes = { modern = ns.SomethingNeedDoing.Themes.modern,
-               forever = ns.SomethingNeedDoing.Themes.forever },
-})
-
--- In your view constructor, check each native resource Result.
 local styled, styleError = app.ui:Style(ns.window, "dialog")
 if not styled then app.log:Warn(styleError.message) end
+
 local applied, fontError = app.fonts:Apply(ns.title, "heading")
 if not applied then app.log:Warn(fontError.message) end
+
 local colored, colorError = app.ui:Color(ns.title, "accent")
 if not colored then app.log:Warn(colorError.message) end
 ```
 
-Typography and color are separate: applying a font preserves an explicit XP-bar
-or navigation color. Register a semantic color when it should follow the theme.
-Custom views watch `SelectAppearance` to remeasure after font resolution settles;
-standard options controls do that themselves. [The executable example](examples/Consumer.lua)
-includes a custom theme, shared typography, profile controls and a custom view.
-
-### Updating state
-
-SND's state API has an explicit flow: `Update → Select → Watch`. An update
-publishes one coherent snapshot; a watcher only runs when its selected value
-changes.
-
-```lua
-local search = app:State({ query = "", searching = false, results = {} })
-
-app:OnReady(function()
-    local view = app:Scope("search-view")
-    view:Watch(search:Select(function(value)
-        return { searching = value.searching, results = value.results }
-    end), function(value)
-        ns.SearchUI:Render(value)
-    end)
-
-    -- Cancel this scope when the view closes. Create a fresh one on reopen.
-    ns.SearchUI:SetOnClose(function() view:Cancel() end)
-end)
-
-local ok, err = search:Update(function(draft)
-    draft.query = "Ironforge"
-    draft.searching = true
-    draft.results = {}
-end)
-if not ok then
-    app.log:Warn("Could not update search", { code = err.code })
-end
-```
-
-`SearchUI` and its close callback are consumer code. The watcher receives the
-current value when activated, so a reopened view catches up immediately. Small
-selected tables compare by value; returning a fresh table doesn't force a
-redraw when its contents are unchanged.
-
-Keep your catalog, route graph or XP history in its existing model. Publish the
-small amount of state the UI needs after a domain operation succeeds.
-
-### Owning callbacks
-
-Use a scope when several callbacks belong to the same view or operation:
-
-```lua
-local preview = app:Scope("reward-preview")
-local subscribed, err = preview:Event("GET_ITEM_INFO_RECEIVED", function(itemID, success)
-    if success then ns.Preview:RefreshItem(itemID) end
-end)
-if not subscribed then app.log:Warn(err.message) end
-
-local scheduled, timerOrError = preview:After(0.15, "refresh", function()
-    ns.Preview:Refresh()
-end)
-if not scheduled then app.log:Warn(timerOrError.message) end
-
--- Closing the preview cancels its subscriptions and pending work.
--- Call preview:Cancel() from the preview's close handler.
-```
-
-Scheduling another `After` with the same key replaces the pending callback.
-Scopes also own recurring timers, additive hooks and guards for external async
-callbacks. Secure hooks can't be removed from WoW; cancellation detaches your
-subscriber from an inert dispatcher.
+A `theme` setting selects the palette. The [executable example](examples/Consumer.lua)
+shows custom themes and `SelectAppearance` observers for remeasuring custom views.
 
 ## Design Notes
 
-A few decisions are worth making explicit:
+**Settings have one writer.** Commands validate before publishing; views observe
+committed settings. `SetMany` commits related fields together:
 
-- **One owner for settings.** Observe committed settings with `SelectSettings`;
-  don't copy them into a second mutable store. Profile changes and field writes
-  use the same transaction path.
-- **Explicit propagation.** There are no observable proxies or inferred
-  dependencies. If quest metadata changes without changing the quest IDs,
-  publish that dependency explicitly. Request generations and cache policy stay
-  with the consumer.
-- **Success means committed.** Invalid updates leave the previous state intact.
-  Reentrant writes from a watcher fail rather than queue invisibly. Schedule an
-  intentional follow-up through the existing scope scheduler.
-- **Small snapshots.** State uses defensive copies and structural equality.
-  Trees are bounded at 32 levels and 20,000 entries per copy; those are safety
-  limits, not an invitation to put a quest database in a reactive store.
-- **Persistence stays deliberate.** Settings adapters stage changes before
-  replacing globals and preserve unknown future schemas. Domain checkpoints
-  remain consumer-owned. Assigning SavedVariables doesn't force a disk flush.
-- **Native UI has its own lifecycle.** Open menus keep input ownership, color
-  previews remain transient, and protected frames aren't automatically moved.
+```lua
+local ok, err = app:SetMany({ scale = 1.25, font = "Game tooltip" })
+if not ok then app.log:Warn(err.message) end
+```
 
-SND doesn't own gameplay state machines, world-map geometry, animation clocks or
-provider data. Those are the parts that make your add-on your add-on.
+**State propagation is explicit.** `Update → Select → Watch` publishes one
+snapshot and redraws only when the selection changes:
+
+```lua
+local state = app:State({ count = 0 })
+local view = app:Scope("counter")
+view:Watch(state:Select(function(value) return value.count end), function(count)
+    ns.Counter:SetText(count)
+end)
+local ok, err = state:Update(function(draft) draft.count = draft.count + 1 end)
+if not ok then app.log:Warn(err.message) end
+```
+
+**Callbacks have an owner.** Cancel a view's scope when it closes to release its
+subscriptions and pending timers. Reusing a timer key replaces pending work:
+
+```lua
+local ok, err = view:After(0.15, "refresh", function() ns.UI:Refresh() end)
+if not ok then app.log:Warn(err.message) end
+-- In the view's close handler:
+view:Cancel()
+```
 
 ## Testing
 
-With Lua 5.1 and Python 3 installed, run:
+With Lua 5.1 and Python 3 installed, run from the SND directory:
 
 ```sh
 python3 tools/check.py
 lua5.1 tests/run.lua
-lua5.1 tests/consumers.lua
 ```
-
-The focused contract suite is self-contained. Each test includes a short
-justification explaining the failure it prevents. The metadata check catches
-version, load-order and local documentation-link drift.
-
-The optional [consumer checks](tests/consumers.lua) require sibling checkouts of
-XPIsland, FindAnUpgrade and AsTheCrowFlies. They load real domain modules with
-mock controllers and UI. They are design evidence, not complete migrations of
-the add-ons' settings or options. Source baselines are recorded beside the checks.
-
-If you're using Python with Lupa instead of a Lua executable, use
-`python tests/run.py` and `python tests/run.py tests/consumers.lua`. Both select
-Lua 5.1 explicitly. CI runs the self-contained suite; it doesn't require access
-to private consumer repositories.
-
-Offline contract and consumer-mock checks cover the runtime. Native rendering,
-menu/picker input, combat restrictions and mixed-version coexistence still need
-in-game acceptance on the target client. The mocks aren't migrations of the
-shipping add-ons.
 
 ## Contributing
 
