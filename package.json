@@ -1,0 +1,42 @@
+{
+  "name": "somethingneeddoing",
+  "version": "0.1.0",
+  "description": "A microframework for building World of Warcraft addons. Registration, options panels & window chrome, font handling, slash commands, event handling & logging.",
+  "author": {
+    "name": "Matt Silverlock",
+    "email": "matt@eatsleeprepeat.net",
+    "url": "https://github.com/elithrar"
+  },
+  "license": "Apache-2.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elithrar/SomethingNeedDoing.git"
+  },
+  "files": [
+    "src/",
+    "Embed.xml",
+    "LICENSE",
+    "API.md",
+    "README.md",
+    "examples/"
+  ],
+  "scripts": {
+    "test": "lua5.1 tests/run.lua",
+    "test:consumers": "lua5.1 exercises/run.lua",
+    "check": "python3 tools/check.py"
+  },
+  "snd": {
+    "interface": 16001,
+    "lua": "5.1",
+    "loadOrder": [
+      "src/Core.lua",
+      "src/Diagnostics.lua",
+      "src/Scope.lua",
+      "src/State.lua",
+      "src/Settings.lua",
+      "src/UI.lua",
+      "src/Options.lua"
+    ]
+  }
+}

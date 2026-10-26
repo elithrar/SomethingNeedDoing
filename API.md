@@ -1,12 +1,12 @@
-# SomethingNeedDoing: initial API surface
+# SomethingNeedDoing API — 0.1.0
 
-**Status: proposed, unimplemented.** This document stubs the initial contract; the examples are design sketches, not a working SDK. API names and adapter shapes may change before the first release. See [the extraction audit](EXTRACTION-AUDIT.md) for source candidates and migration boundaries.
+**Status: initial implementation, version 0.1.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
 SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
 ## 1. Packaging and instance ownership
 
-The first implementation target is **WoW Forever, interface 16001, Lua 5.1**. Retail or other clients require explicit adapters and native-contract tests; a familiar API name does not establish compatibility.
+The supported implementation target is **WoW Forever, interface 16001, Lua 5.1**. Retail or other clients require explicit adapters and native-contract tests; a familiar API name does not establish compatibility.
 
 Bundle a pinned copy under each consuming add-on, loaded before that add-on's modules through its TOC. The bootstrap exports a factory into the TOC namespace. It does not register a standalone add-on, shared SavedVariables, or a global singleton.
 
@@ -83,7 +83,7 @@ Initial field types: `boolean`, finite `number`, finite `integer`, bounded `stri
 
 Change records contain `revision`, `reason` (`set`, `switch`, `duplicate`, `copy`, `reset`, or `bind`), `keys` as a set of paths, and `profileChanged`. No-op writes emit nothing. Reentrant writes from listeners are rejected with `reentrant`; schedule intentional follow-up work explicitly (see section 3a). Options refreshes must not feed writes back into controls.
 
-### Persistence adapter stub
+### Persistence adapter contract
 
 The adapter is add-on-owned. SND reads only declared globals after restoration; it does not choose account/character scope or infer a schema from field defaults.
 
@@ -102,7 +102,7 @@ function Adapter:Prepare(state, operation, fields)
 end
 ```
 
-`state` supplies `values` (the active settings table), `readOnly`, `activeProfile` (optional name), and a `profiles` descriptor containing names and supported operations. It can carry opaque adapter-owned data for the existing database layout. SND validates the complete candidate before replacing declared globals and its current state, without yielding or calling listeners between assignments. All callbacks run afterward. `Prepare` receives `{ kind = "set", path = ..., value = ... }` or one of the profile operations below. The adapter remains responsible for preserving unrelated fields and SavedVariables aliases.
+`state` supplies `values` (the active settings table), `readOnly`, `activeProfile` (optional name), and a `profiles` descriptor containing names and supported operations. It can carry opaque adapter-owned data for the existing database layout. SND validates the complete candidate before replacing declared globals and its current state, without yielding or calling listeners between assignments. All callbacks run afterward. `Prepare` receives `{ kind = "set", path = ..., value = ... }` or one of the profile operations below. The adapter remains responsible for preserving unrelated fields and legacy names. Plain-data copying does not preserve table reference identity across saved globals. `profiles` is `{ names = { ... }, operations = { switch = true, duplicate = true, copy = true, reset = true, bind = true } }`; include only supported operation keys. Names are returned in adapter-supplied display order. See [the minimal single-settings adapter](examples/SettingsAdapter.lua).
 
 On restore, normalized globals are installed only for a writable state. Future schemas remain untouched and can expose read-only defaults; an adapter may instead return an explicit incompatible-schema error and prevent readiness. Identity-dependent stores can expose defaults read-only with `needsCharacter = true` until the add-on calls `BindCharacter`. Thus SND does not move XPIsland's player initialization from world entry to file load.
 
@@ -135,7 +135,7 @@ end)
 
 | API | Contract |
 | --- | --- |
-| `app:State(initial, spec?) -> state` | Create an app-owned, memory-only plain-data store. Optional `spec.validate(candidate) -> boolean, error` validates initial data and each candidate. It cannot normalize or mutate committed data. |
+| `app:State(initial, spec?) -> state` | Create an app-owned, memory-only plain-data store with a table root. Optional `spec.validate(candidate) -> boolean, error` validates initial data and each candidate. It cannot normalize or mutate committed data. |
 | `state:Read() -> snapshot, revision` | Defensive copy and monotonically increasing store-local revision, starting at zero. |
 | `state:Update(mutator, expectedRevision?) -> boolean, error` | Copy current state, run the mutator, validate, commit once, then notify. Optional revision rejects stale writes before running the mutator. |
 | `state:Select(project) -> selection` | Describe a pure projection of this store. A selection is not another mutable store and has no scheduler or permanent subscription. |
@@ -146,7 +146,7 @@ State may be declared before readiness; watches declared then activate after suc
 
 ### Update and equality rules
 
-- Data consists of readable nil/boolean/string/finite-number values and acyclic plain tables with string or finite integer keys. No frames, functions, userdata, metatables, secret values, or shared-reference identity contracts. Domain objects and large catalogs stay outside. A nil field is absent, as in Lua.
+- Data consists of readable nil/boolean/string/finite-number values and acyclic plain tables with string or finite integer keys. No frames, functions, userdata, metatables, secret values, or shared-reference identity contracts. Domain objects and large catalogs stay outside. A nil field is absent, as in Lua. Copies reject trees deeper than 32 levels or larger than 20,000 entries; these are safety bounds, not performance targets.
 - The mutator edits a private draft and must not yield or perform side effects. Return `false, error` to reject; a nil return accepts the draft. Exceptions, validation failure, and stale revisions leave state and revision untouched. Retained drafts, reads, selector inputs, validator inputs, and callback values cannot mutate live state.
 - A structurally equal candidate is a successful no-op: no revision increment or notification. Scalars compare by value; plain tables compare recursively by keys and values, ignoring insertion order. Selections use the same rule, so returning a small new record does not trigger spurious renders. Nil is a valid selected value. No configurable comparator in v0.
 - All active projections for that store reevaluate on a commit; only changed selections notify. Selectors are pure and cannot query mutable external state as an undeclared dependency. Publish a small domain-owned revision or derived value when external data changes. There is no automatic dependency tracking between stores or selector chaining in v0.
@@ -154,7 +154,7 @@ State may be declared before readiness; watches declared then activate after suc
 - Writes during any SND mutator, validator, selector, or change callback are rejected with `reentrant`, including writes to another state/settings store in the same app. This replaces the earlier queued-settings-write proposal: success must mean committed, not merely queued. When an intentional follow-up is required, schedule it explicitly through `scope:After(0, key, callback)` and retain the consumer's loop prevention.
 - Watchers run synchronously in registration order after publication. A watcher failure is reported and cannot roll back a commit or prevent other watchers from running. A failed projection retains its last successful value and can retry on the next commit. Cancellation during delivery suppresses later canceled subscribers; registration during delivery takes its initial snapshot immediately and joins subsequent commits. No yielding callbacks.
 
-Use small display snapshots, not per-frame copies of an XP history, navigation graph, or quest catalog. Animation interpolation stays in the renderer; domain clocks and reconciliation stay in the model. This first design deliberately trades copying and structural comparison for predictable ownership. Benchmark actual store sizes before promoting it to a production runtime.
+Use small display snapshots, not per-frame copies of an XP history, navigation graph, or quest catalog. Animation interpolation stays in the renderer; domain clocks and reconciliation stay in the model. This implementation trades copying and structural comparison for predictable ownership. Benchmark actual store sizes before moving a consumer’s hot path into it.
 
 ### Settings, editors, and UI bindings
 
@@ -170,7 +170,7 @@ end)
 
 `SelectSettings` uses the existing settings revision and transaction owner. Watchers see the fully committed profile and values. Equal-value profile switches notify only projections that include identity/status; the existing `OnSettingsChanged` still provides operation reasons and `profileChanged`. Both notification APIs read the same commit, and writes from either are rejected during dispatch. Do not register both to perform the same refresh.
 
-Extend `app:Set(path, value, expectedRevision?)` with the same stale-revision check. A settings watcher receives the revision that an editor can capture at opening; any intervening committed change invalidates that edit. SND's built-in editor already owns this token. Color previews stay outside committed state and continue using the explicit preview callback. Preview cancellation, menus, and gesture cleanup follow the existing profile rules.
+`app:Set(path, value, expectedRevision?)` uses the same stale-revision check. A settings watcher receives the revision that an editor can capture at opening; any intervening committed change invalidates that edit. SND's built-in editor already owns this token. Color previews stay outside committed state and continue using the explicit preview callback. Preview cancellation, menus, and gesture cleanup follow the existing profile rules.
 
 Built-in options controls remain bound with `key`; they do not need a second state binding language. The shell reevaluates `enabled(app)` and `visible(app)` on committed settings changes. These predicates must read settings only; custom components watch domain state through their supplied scope. Custom component scopes activate while their page is visible, cancel on hide, and are replaced on reopening. The shell calls the retry-safe `create(parent, app, scope)` again to rebind reused frames to the new scope, then Refresh/Layout. Consumers must not keep an old canceled scope in a reused frame script. Native menu safety still defers actual layout/menu rebuilding until release; reactivity does not permit rebuilding under input.
 
@@ -194,7 +194,7 @@ app.profiles:Reset()
 
 | API | Contract |
 | --- | --- |
-| `profiles:List() -> names` | Defensive copy in deterministic display order. |
+| `profiles:List() -> names` | Defensive copy in adapter-supplied display order. |
 | `profiles:Active() -> name or nil` | Current named profile; single-settings adapters may return nil. |
 | `profiles:Capabilities() -> descriptor` | Supported operations and current read-only/identity status. |
 | `profiles:BindCharacter(identity)` | Adapter-defined character association, invoked only when the consumer has a valid identity. |
@@ -203,9 +203,9 @@ app.profiles:Reset()
 | `profiles:CopyFrom(name)` | Replace active settings from another profile, retaining the active name. |
 | `profiles:Reset()` | Reset the active settings to validated defaults. |
 
-Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is proposed for v0.
+Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.1.0.
 
-Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This improves the current add-ons' preview-then-rollback implementation and needs new tests.
+Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This replaces preview-then-rollback writes; the focused picker test covers native hide-before-accept and stale callbacks.
 
 A color control may supply a separate `preview(value)` repaint callback; cancellation sends the original value. `app:Get` and `OnSettingsChanged` remain committed-only. Consumers must not persist values from a preview callback. Editors snapshot the settings revision and reject an outdated commit if another write has replaced their starting state.
 
@@ -241,9 +241,9 @@ app:Slash("/example", function() options:Toggle() end)
 
 Pages have stable IDs and retain their own scroll offsets. Sections flow vertically with measured labels; there is no general CSS/grid engine in v0. The header, tabs, and close control remain accessible while the body scrolls on short screens. Narrow screens scale the shell as needed. Construction is retryable and reuses existing frame/text objects; a failed build is never published as a usable panel.
 
-Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `color`, `button`, and `description`. Bound controls declare `key`; labels, hints, units, menu choices, and button actions come from the consumer. Numeric bounds come from the field schema; display formatting never changes stored units. `enabled(app)` and `visible(app)` are pure predicates. Reset/copy confirmation is supplied by the profile page, not by silently changing model semantics.
+Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `color`, `button`, and `description`. Bound controls declare `key`; labels, hints, units, menu choices (`choices = { { label = ..., value = ... } }`), and button `action(app)` callbacks come from the consumer. Numeric bounds come from the field schema; display formatting never changes stored units. `enabled(app)` and `visible(app)` are pure predicates. Reset/copy confirmation is supplied by the profile page, not by silently changing model semantics.
 
-Custom escape hatch: `{ type = "custom", id = "preview", create = function(parent, app, scope) ... end }`. The factory returns a component with `Refresh()`, `Layout(width) -> height`, and `Hide()` methods. It creates children only under its supplied parent and owns callbacks through its supplied scope. Failed construction must be retry-safe; named components are reused, not rebuilt on every refresh.
+Custom escape hatch: `{ type = "custom", id = "preview", create = function(parent, app, scope) ... end }`. The factory returns a component with `Refresh()`, `Layout(width) -> height`, and `Hide()` methods. Its supplied parent is a pooled container positioned in the section; it creates children only under that container and owns callbacks through its supplied scope. Failed construction must be retry-safe; named components are reused, not rebuilt on every refresh.
 
 Open menus are not regenerated underneath input. Selection/font changes queue menu regeneration until release. Page switches, hiding, and geometry changes close only owned menus, release edit focus, and cancel owned transient editors. Hiding options does not stop unrelated gameplay work.
 
@@ -264,15 +264,15 @@ local placement = app.layout:PlacePopup(menu, button, {
 | API | Contract |
 | --- | --- |
 | `ui:Style(frame, role) -> boolean, error` | Apply named theme roles: `dialog`, `section`, `button`, `tab`, `input`. Idempotent; preserve caller content and scripts. |
-| `ui:Border(frame, kind) -> boolean, error` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background and restore owned native edges. |
+| `ui:Border(frame, kind) -> boolean, error` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background. These helpers require owned BackdropTemplate frames; they do not alter Blizzard NineSlice artwork. |
 | `fonts:Apply(object, role) -> boolean, error` | Assign role family/size (`heading`, `body`, `muted`, `control`, `menu`). Semantic color is supplied by the theme; muted text need not be smaller. |
 | `fonts:Entries() -> entries` | Stable font choices including unavailable saved preferences. |
 | `fonts:Measure(text) -> width, height` | Measured in the text object's local UI units, using actual native font readback and effective scale. |
-| `fonts:Refresh()` | Reconcile only invalidated font applications and measurements. |
+| `fonts:Refresh()` | Reapply registered roles; bounded family fallback keeps owned text consistent. Measurements cache by font, text, width and effective scale. |
 | `layout:KeepOnScreen(frame, spec) -> handle, error` | Keep an owned, unprotected frame within usable UIParent bounds; recheck on geometry changes. |
-| `layout:PlacePopup(popup, anchor, spec) -> handle, error` | Place beside an anchor, try the alternate side, then clamp; re-evaluate when visible geometry changes. |
+| `layout:PlacePopup(popup, anchor, spec) -> handle, error` | Place beside an anchor, try the alternate side, then clamp; re-evaluate on show, size and display changes. Call Refresh after moving the anchor. |
 
-Layout margins are UIParent logical units. Geometry calculations normalize effective scales before comparison; cursor pixels, local frame units, and UIParent units cannot be mixed. Screen awareness means usable UIParent bounds, including native notch handling, not hard-coded physical monitor dimensions. These helpers do not save placement, choose a dock side, show hidden frames, or override an active native drag. Handles support `Refresh()` and idempotent `Cancel()`.
+Layout margins are UIParent logical units. Geometry calculations normalize effective scales before comparison; cursor pixels, local frame units, and UIParent units cannot be mixed. Screen awareness means usable UIParent bounds, including native notch handling, not hard-coded physical monitor dimensions. These helpers do not save placement, choose a dock side, show hidden frames, or override an OnDragStart/OnDragStop gesture. Consumers using custom movement scripts must avoid calling Refresh during movement. Handles support `Refresh()` and idempotent `Cancel()`.
 
 Only add-on-owned, non-forbidden, unprotected frames are accepted for automatic geometry changes. SND does not silently defer protected mutations or promise taint safety. Blizzard frame suppression, combat policy, and product-specific placement rules remain consumer-owned.
 
@@ -327,14 +327,10 @@ app.log:Error("Preview failed", { questID = questID })
 
 This diagnostic service is **new work**: the current add-ons have messages and status fields, not an existing reusable logger. Gameplay recording (such as FAU reward observations) is not logging and stays outside SND.
 
-## 9. Initial implementation gates
+## 9. Verification and remaining integration gates
 
-1. Extract theme/fonts and owned lifecycle primitives with tests before migrating consumers. Validate the small state contract using at least two concrete consumer integrations; retain all three design exercises as fixtures.
-2. Build the retryable options shell and declarative bindings; preserve native menus and color-picker callback ordering.
-3. Add profile adapters for each current schema without converting account/character scope.
-4. Adopt screen helpers where coordinate contracts match; keep bespoke docking, animation, tooltip collision policy, and world-map projection outside the core.
-5. Run the shared contract suite under Lua 5.1, each consumer's existing suite, mixed-version/coexistence tests, and the supported-client live checklist.
+The implementation is covered by [nine focused contract tests](tests/README.md), each with an explicit failure-risk justification, and [three consumer mocks](STATE-EXERCISES.md) against the real runtime. The consumer mocks additionally load original domain modules at pinned revisions. They do not migrate the shipping add-ons.
 
-Required scenarios include future schemas, unavailable identity, failed construction/retry without frame growth, stale color callbacks, profile changes during dragging, late/missing fonts, menus open during refresh, fractional scales, narrow/short displays, repeated hook registration, timer replacement/cancellation, and hidden idle CPU. Source/mocks cannot establish native rendering, combat/taint safety, or actual coexistence.
+Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 
 Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling. Optional components can grow after two consumers demonstrate a shared contract.

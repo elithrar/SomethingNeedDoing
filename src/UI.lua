@@ -1,0 +1,193 @@
+local _, ns = ...
+local SND = ns.SomethingNeedDoing; local I, V = SND._, SND.Values
+local edges = {
+    default='Interface\\Tooltips\\UI-Tooltip-Border', thin='Interface\\Buttons\\WHITE8X8',
+    tooltip='Interface\\Tooltips\\UI-Tooltip-Border', dialog='Interface\\DialogFrame\\UI-DialogBox-Border',
+}
+local roles = { dialog=true, section=true, button=true, tab=true, input=true }
+local function safeFrame(frame)
+    return frame and (not frame.IsForbidden or not frame:IsForbidden()) and (not frame.IsProtected or not frame:IsProtected())
+end
+I.safeFrame = safeFrame
+SND._install[#SND._install + 1] = function(app)
+    local ui, fonts, layout = {}, {}, {}; app.ui, app.fonts, app.layout = ui, fonts, layout
+    local styled = setmetatable({}, {__mode='k'})
+    function ui:Border(frame, kind)
+        if not safeFrame(frame) or not frame.SetBackdrop then return false, I.error('unavailable') end
+        if kind ~= 'none' and not edges[kind] then return false, I.error('invalid') end
+        local backdrop = frame.GetBackdrop and frame:GetBackdrop() or {}
+        local spec = {}; for k,v in pairs(backdrop or {}) do spec[k] = v end
+        spec.edgeFile = edges[kind]; spec.edgeSize = kind == 'thin' and 1 or kind == 'dialog' and 16 or 12
+        local bg = frame.GetBackdropColor and { frame:GetBackdropColor() }
+        local ok, err = pcall(frame.SetBackdrop, frame, spec)
+        if not ok then return false, I.error('unavailable', tostring(err)) end
+        if bg and bg[1] then frame:SetBackdropColor(unpack(bg)) end
+        if frame.SetBackdropBorderColor then frame:SetBackdropBorderColor(.45,.45,.45,1) end
+        return true
+    end
+    function ui:Style(frame, role)
+        if not roles[role] then return false, I.error('invalid') end
+        if not safeFrame(frame) or not frame.SetBackdrop then return false, I.error('unavailable') end
+        frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8', edgeFile=edges.default, edgeSize=12,
+            insets={left=3,right=3,top=3,bottom=3}})
+        frame:SetBackdropColor(.055,.055,.065,.97); frame:SetBackdropBorderColor(.45,.45,.45,1)
+        if not styled[frame] and (role=='button' or role=='tab') then
+            styled[frame] = true
+            app._system:HookScript(frame,'OnEnter',function(self) self:SetBackdropBorderColor(1,.82,.2,1) end)
+            app._system:HookScript(frame,'OnLeave',function(self) self:SetBackdropBorderColor(.45,.45,.45,1) end)
+        end
+        return true
+    end
+    local applications = setmetatable({}, {__mode='k'})
+    local sizes = {heading=16,body=14,muted=14,control=13,menu=13}
+    local media, refreshing
+    local downgrade, generation = {}, 0
+    local measurements = setmetatable({}, {__mode='k'})
+    local function nativeFont()
+        if GameFontNormal and GameFontNormal.GetFont then return GameFontNormal:GetFont() end
+        return 'Fonts\\FRIZQT__.TTF', 13, ''
+    end
+    local function preference()
+        if app._ready and app._settingsFields and app._settingsFields.font then return app:Get('font') end
+        return 'Game tooltip'
+    end
+    local function getMedia()
+        if LibStub then local ok, result = pcall(function() return LibStub('LibSharedMedia-3.0', true) end); if ok then return result end end
+    end
+    function fonts:Entries()
+        media = getMedia()
+        local names, out = { ['Game tooltip']=true, ['Arial']=true, ['Friz Quadrata']=true }, {}
+        if media and media.List then for _, name in ipairs(media:List('font') or {}) do names[name] = true end end
+        names[preference()] = true
+        for name in pairs(names) do out[#out+1]={label=name,value=name} end
+        table.sort(out,function(a,b) return a.label < b.label end); return out
+    end
+    local function apply(object, role)
+        local fallback, nativeSize, flags = nativeFont()
+        local path = fallback
+        local selected = preference(); media = media or getMedia()
+        if selected == 'Arial' then path='Fonts\\ARIALN.TTF'
+        elseif selected == 'Friz Quadrata' then path='Fonts\\FRIZQT__.TTF'
+        elseif selected == 'Game tooltip' and GameTooltipText and GameTooltipText.GetFont then path = GameTooltipText:GetFont()
+        elseif media and media.Fetch then path = media:Fetch('font', selected, true) or fallback end
+        local request = selected .. ':' .. tostring(path)
+        path = downgrade[request] or path
+        local size = sizes[role]
+        if (role == 'body' or role == 'muted') and app._ready and app._settingsFields and app._settingsFields.fontSize then size = app:Get('fontSize') end
+        local function try(candidate)
+            local ok, result = pcall(object.SetFont,object,candidate,size,flags or '')
+            if not ok or result == false then return false end
+            local read, actual, height = pcall(object.GetFont,object)
+            return read and type(actual)=='string' and actual:gsub('/','\\'):lower()==candidate:gsub('/','\\'):lower() and V.Number(height) and height>0
+        end
+        if not try(path) then
+            if path~=fallback then downgrade[request]=fallback;generation=generation+1 end
+            if not try(fallback) then
+                if not object.SetFontObject or not GameFontNormal then return false,I.error('unavailable') end
+                object:SetFontObject(GameFontNormal)
+            end
+        end
+        if object.SetTextColor then
+            if role=='heading' then object:SetTextColor(1,.82,.2)
+            elseif role=='muted' then object:SetTextColor(.65,.65,.65)
+            else object:SetTextColor(.93,.94,.97) end
+        end
+        return true
+    end
+    function fonts:Apply(object, role)
+        if not sizes[role] or not object or not object.SetFont or not object.GetFont then return false, I.error('invalid') end
+        applications[object] = role
+        local before=generation
+        local ok,err=apply(object,role)
+        if generation~=before and not refreshing then self:Refresh() end
+        return ok,err
+    end
+    function fonts:Measure(text)
+        assert(text and text.GetStringWidth and text.GetStringHeight, 'FontString required')
+        local path,size,flags=text:GetFont();local scale=text:GetEffectiveScale()
+        local key=tostring(path)..':'..tostring(size)..':'..tostring(flags)..':'..tostring(scale)..':'..tostring(text:GetWidth())..':'..(text:GetText()or'')
+        local cached=measurements[text]
+        if not cached or cached.key~=key then
+            cached={key=key,width=math.ceil(text:GetStringWidth()*scale)/scale,height=math.ceil(text:GetStringHeight()*scale)/scale};measurements[text]=cached
+        end
+        return cached.width,cached.height
+    end
+    function fonts:Refresh()
+        if refreshing then return end
+        refreshing = true; media = getMedia()
+        for _=1,3 do
+            local before=generation
+            for object,role in pairs(applications)do local ok,err=pcall(apply,object,role);if not ok then I.report(app,err)end end
+            if before==generation then break end
+        end
+        refreshing = nil
+    end
+    app:OnReady(function()
+        app:OnSettingsChanged(function(_, change) if change:Touches('font','fontSize') then fonts:Refresh() end end)
+        local connected
+        local function connect()
+            local lib=getMedia()
+            if lib and lib~=connected and lib.RegisterCallback then
+                connected=lib;media=lib
+                local receiver={}
+                function receiver:Changed(_,kind)
+                    if kind=='font' then downgrade={};fonts:Refresh();if app._panel then app._panel:Refresh()end end
+                end
+                lib.RegisterCallback(receiver,'LibSharedMedia_Registered','Changed')
+                I.handle(app,function()if lib.UnregisterAllCallbacks then lib.UnregisterAllCallbacks(receiver)end end)
+                downgrade={};fonts:Refresh()
+            end
+        end
+        connect();app._system:Event('ADDON_LOADED',connect)
+        fonts:Refresh()
+    end)
+    local active = {}
+    local function geometry(frame)
+        if not safeFrame(frame) or not frame.GetLeft then return end
+        local ratio = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local left, bottom, width, height = frame:GetLeft(), frame:GetBottom(), frame:GetWidth(), frame:GetHeight()
+        if not V.Number(left) or not V.Number(bottom) or not V.Number(ratio) or ratio<=0 then return end
+        return left*ratio, bottom*ratio, width*ratio, height*ratio, ratio
+    end
+    local function track(frame, anchor, spec)
+        spec = spec or {}
+        if not safeFrame(frame) or (anchor and not safeFrame(anchor)) then return nil, I.error('unavailable') end
+        local margin = spec.margin or 0
+        if not V.Number(margin) or margin<0 then return nil, I.error('invalid') end
+        local h, dragging = nil, false
+        local owner = app:Scope()
+        h = I.handle(app, function() active[h] = nil; owner:Cancel() end)
+        function h:Refresh()
+            if not self.active or dragging or (frame.IsShown and not frame:IsShown()) then return true end
+            if not safeFrame(frame) then return false, I.error('unavailable') end
+            local x,y,w,height,ratio = geometry(frame); if not x then return false,I.error('unavailable') end
+            local maxX,maxY = UIParent:GetWidth()-w-margin,UIParent:GetHeight()-height-margin
+            if anchor then
+                local ax,ay,aw,ah = geometry(anchor); if not ax then return false,I.error('unavailable') end
+                local function place(side) return side=='left' and ax-w-margin or ax+aw+margin end
+                x,y=place(spec.preferredSide or 'right'),ay+ah-height
+                if x<margin or x>maxX then x=place(spec.fallbackSide or 'left') end
+            end
+            local nx,ny=math.max(margin,math.min(maxX,x)),math.max(margin,math.min(maxY,y))
+            if anchor or nx~=x or ny~=y then
+                frame:ClearAllPoints();frame:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',nx/ratio,ny/ratio)
+            end
+            return true
+        end
+        active[h] = true
+        owner:HookScript(frame,'OnShow',function() h:Refresh() end)
+        owner:HookScript(frame,'OnSizeChanged',function() h:Refresh() end)
+        if anchor then owner:HookScript(anchor,'OnSizeChanged',function() h:Refresh() end) end
+        owner:HookScript(frame,'OnDragStart',function() dragging=true end)
+        owner:HookScript(frame,'OnDragStop',function() dragging=false;h:Refresh() end)
+        h:Refresh(); return h
+    end
+    function layout:KeepOnScreen(frame,spec) return track(frame,nil,spec) end
+    function layout:PlacePopup(frame,anchor,spec) return track(frame,anchor,spec) end
+    -- Geometry changes are infrequent; no geometry polling in an animation loop.
+    app:OnReady(function()
+        for _, event in ipairs({'UI_SCALE_CHANGED','DISPLAY_SIZE_CHANGED'}) do
+            app._system:Event(event,function() for h in pairs(active) do h:Refresh() end end)
+        end
+    end)
+end

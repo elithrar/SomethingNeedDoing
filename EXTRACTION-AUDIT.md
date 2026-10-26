@@ -1,6 +1,6 @@
 # Extraction audit: XPIsland, FindAnUpgrade, AsTheCrowFlies
 
-This is a source audit against the proposed [SND API](API.md), not a completed extraction or a promise of unchanged behavior from copying files. All three add-ons target Forever interface 16001. Their existing models, state ownership, and tests define the migration baseline.
+This is the historical extraction audit against the [SND API](API.md), not a completed extraction or a promise of unchanged behavior from copying files. All three add-ons target Forever interface 16001. Their existing models, state ownership, and tests define the migration baseline.
 
 ## Audited revisions
 
@@ -94,7 +94,7 @@ XPIsland's [font pipeline][x-ui] checks real native font readback, reconciles a 
 
 ## Reactive state follow-up
 
-The [state API](API.md#3a-small-reactive-state) now proposes explicit Update/Select/Watch propagation. [Three executable exercises](STATE-EXERCISES.md) load actual domain modules from the pinned revisions above and test small UI-state bridges. Propagation, defensive snapshots, revision checks, and subscription ownership move to SND; domain authority, metadata invalidation, search generations, checkpoint timing, and gameplay state machines stay local. This refines the propagation boundary without changing the bespoke classifications above. The exercise model is not a shipped runtime or completed consumer migration.
+The [state API](API.md#3a-small-reactive-state) implements explicit Update/Select/Watch propagation. [Three executable exercises](STATE-EXERCISES.md) load actual domain modules from the pinned revisions above and test small UI-state bridges. Propagation, defensive snapshots, revision checks, and subscription ownership move to SND; domain authority, metadata invalidation, search generations, checkpoint timing, and gameplay state machines stay local. This refines the propagation boundary without changing the bespoke classifications above. The current exercises use the implemented runtime; they remain mock integrations rather than completed consumer migrations.
 
 ## Tests to move, adapt, or retain
 
@@ -121,7 +121,7 @@ New tests required: two or three consumers active together, different bundled SN
 
 Pin the exact SND revision in each consumer's release inputs. Vendor the files so users do not need another installed add-on, and verify bundled hashes in packaging. A later SND release does not silently change already published add-ons. Avoid a process-wide "newest library wins" singleton for stateful UI services.
 
-Each migration must keep SavedVariables scope and valid settings intact, preserve unrecognized future data, retain the add-on's semantic regression tests, and pass its packaging/release guards. Preserve applicable source licenses and notices when implementation is extracted; this audit grants no new license. The SND runtime license and vendoring automation still need to be chosen before copying implementation.
+Each migration must keep SavedVariables scope and valid settings intact, preserve unrecognized future data, retain the add-on's semantic regression tests, and pass its packaging/release guards. Preserve applicable source licenses and notices when implementation is extracted; this audit grants no new license. SND 0.1.0 uses Apache-2.0 and an explicit Embed.xml/package.json load order. Preserve original licenses and notices when importing consumer code; the new runtime is authored locally rather than copied wholesale.
 
 ## Explicit non-goals
 

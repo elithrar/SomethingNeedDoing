@@ -1,0 +1,9 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <Script file="src\Core.lua"/>
+    <Script file="src\Diagnostics.lua"/>
+    <Script file="src\Scope.lua"/>
+    <Script file="src\State.lua"/>
+    <Script file="src\Settings.lua"/>
+    <Script file="src\UI.lua"/>
+    <Script file="src\Options.lua"/>
+</Ui>
