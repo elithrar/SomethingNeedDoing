@@ -320,7 +320,11 @@ test('generated options and settled font layout','default panels must bind valid
     menu:OpenMenu();panel.bar:SetMinMaxValues(0,100);panel.bar:SetValue(10);assert(not menu:IsMenuOpen())
     local count=#W.frames;panel:Close();assert(panel:Open());assert(#W.frames==count)
     assert(panel:SelectPage('profiles'));assert(a.profiles:Duplicate('Other'));assert(a.profiles:Active()=='Other')
-    panel:Close();W.event('PLAYER_LOGOUT')
+    local frameName=a.name..'_SND_Options';local found=false
+    for _,name in ipairs(UISpecialFrames)do if name==frameName then found=true end end;assert(found and _G[frameName]==panel.frame)
+    panel._confirm={kind='reset'};_G[frameName]:Hide();assert(not panel:IsShown() and panel._confirm==nil and panel._view==nil)
+    assert(panel:Open());W.event('PLAYER_LOGOUT')
+    for _,name in ipairs(UISpecialFrames)do assert(name~=frameName)end
 end)
 
 test('font family retry and native read failures','both consumers require regular text to survive bold rejection and recover together after a transient per-object failure',function()

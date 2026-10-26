@@ -268,7 +268,7 @@ local options = app:Options({
 app:Slash("/example", function() options:Toggle() end)
 ```
 
-`app:Options(spec?) -> panel` returns a lazy shell. With `pages` omitted, it generates a Settings page from declared fields in sorted path order and a Profiles page. Field labels default to their paths; enums use their values as labels. Explicit pages replace this default and control order, grouping and custom components. `panel:Open(pageID)`, `Close()`, `Toggle()`, `SelectPage(pageID)`, `Refresh()`, and `IsShown()` are the initial methods. Mutating methods return `boolean, error`. One options shell per app initially.
+`app:Options(spec?) -> panel` returns a lazy shell. With `pages` omitted, it generates a Settings page from declared fields in sorted path order and a Profiles page. Field labels default to their paths; enums use their values as labels. Explicit pages replace this default and control order, grouping and custom components. `panel:Open(pageID)`, `Close()`, `Toggle()`, `SelectPage(pageID)`, `Refresh()`, and `IsShown()` are the initial methods. Mutating methods return `boolean, error`. One options shell per app. The named shell registers for native Escape dismissal; hiding it cancels its editors, confirmations and view scope. Disposal removes only its own `UISpecialFrames` entry.
 
 Pages have stable IDs and retain their own scroll offsets. Sections flow vertically with measured labels; there is no general CSS/grid engine in v0. The header, tabs, and close control remain accessible while the body scrolls on short screens. Narrow screens scale the shell as needed. Construction is retryable and reuses existing frame/text objects; a failed build is never published as a usable panel.
 

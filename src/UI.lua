@@ -175,8 +175,9 @@ SND._install[#SND._install + 1] = function(app)
         end
         if nativeFallback[request] then
             local native=nativeFallback[request]
-            if entry.native~=native or object:GetFont()~=entry.actual then object:SetFontObject(native)end
-            entry.native=native;entry.actual=object:GetFont();return true
+            local actual,height,flags=object:GetFont()
+            if entry.native~=native or actual~=entry.actual or height~=entry.height or flags~=entry.actualFlags then object:SetFontObject(native)end
+            entry.native=native;entry.actual,entry.height,entry.actualFlags=object:GetFont();return true
         end
         if role=='emphasis' then
             local bold=media and media.Fetch and media:Fetch('font',selected..' Bold',true)
@@ -192,7 +193,7 @@ SND._install[#SND._install + 1] = function(app)
             if not try(fallback) then
                 if not object.SetFontObject or not GameFontNormal then return false,I.error('unavailable') end
                 nativeFallback[request]=GameFontNormal;generation=generation+1
-                object:SetFontObject(GameFontNormal);entry.native=GameFontNormal;entry.actual=object:GetFont()
+                object:SetFontObject(GameFontNormal);entry.native=GameFontNormal;entry.actual,entry.height,entry.actualFlags=object:GetFont()
             end
         end
         return true

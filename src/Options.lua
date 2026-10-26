@@ -83,6 +83,7 @@ SND._install[#SND._install + 1] = function(app)
             if self.frame then self.frame:StopMovingOrSizing() end
         end
         function panel:_deactivate()
+            self._confirm=nil
             self:_cancelEditors()
             if self._view then self._view:Cancel();self._view=nil end
             for _, component in pairs(self._components) do I.call(app,component.Hide,component) end
@@ -231,7 +232,12 @@ SND._install[#SND._install + 1] = function(app)
             return widget,height,label
         end
         function panel:_build()
-            local f=frame('shell','Frame',UIParent,'BackdropTemplate');self.frame=f;f:Hide()
+            local name=app.name..'_SND_Options'
+            if not self._pool.shell then
+                I.check(_G[name]==nil,'options frame name is already in use')
+                self._pool.shell=CreateFrame('Frame',name,UIParent,'BackdropTemplate')
+            end
+            local f=self._pool.shell;self.frame=f;f:Hide()
             f:SetSize(spec.width or 640,spec.height or 500);f:SetPoint('CENTER');f:SetFrameStrata('DIALOG');f:EnableMouse(true);f:SetMovable(true);f:RegisterForDrag('LeftButton')
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
             f:SetScript('OnHide',function()self:_deactivate()end);requireResource(app.ui:Style(f,'dialog'))
@@ -251,6 +257,12 @@ SND._install[#SND._install + 1] = function(app)
                 b:SetSize(tabWidth,26);b:SetPoint('TOPLEFT',16+(i-1)*(tabWidth+4),-50)
             end
             if not self._keep then local ok,result=app.layout:KeepOnScreen(f,{margin=8});I.check(ok,result.message or 'layout unavailable');self._keep=result end
+            if not self._escape then
+                UISpecialFrames=UISpecialFrames or {};table.insert(UISpecialFrames,name)
+                self._escape=I.handle(app,function()
+                    for index=#UISpecialFrames,1,-1 do if UISpecialFrames[index]==name then table.remove(UISpecialFrames,index)end end
+                end)
+            end
             self._built=true
         end
         function panel:_profiles()
