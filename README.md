@@ -34,8 +34,9 @@ required third-party dependencies. LibSharedMedia is used when available.
 
 ## Installation
 
-Copy `src/`, `Embed.xml` and `LICENSE` into
-`YourAddon/Libs/SomethingNeedDoing/`, and load SND before your add-on's modules:
+Vendor a pinned SND source tree into `YourAddon/Libs/SomethingNeedDoing/`,
+including its documentation, examples, tests and tooling. Only the runtime files
+are loaded by WoW; load SND before your add-on’s modules:
 
 ```text
 ## Interface: 16001
@@ -230,9 +231,6 @@ A few decisions are worth making explicit:
   remain consumer-owned. Assigning SavedVariables doesn't force a disk flush.
 - **Native UI has its own lifecycle.** Open menus keep input ownership, color
   previews remain transient, and protected frames aren't automatically moved.
-- **Every interface needs at least two implementations.** Shared APIs should
-  earn their place through concrete consumers. The three-add-on exercise is how
-  we check that, rather than adding abstractions for hypothetical add-ons.
 
 SND doesn't own gameplay state machines, world-map geometry, animation clocks or
 provider data. Those are the parts that make your add-on your add-on.

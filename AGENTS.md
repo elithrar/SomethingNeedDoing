@@ -1,8 +1,10 @@
 # Working on SomethingNeedDoing
 
-SND is a vendored WoW microframework. Prefer direct implementation and clear ownership over wrappers, convenience synonyms or speculative extension points. Use engineering judgment; this file defines durable boundaries, not a step-by-step script.
+SND is a vendored WoW microframework. Prefer direct implementation and clear ownership over wrappers, convenience synonyms or speculative extension points. For consumer integration, follow the API and ownership guidance here alongside the add-on’s own client, persistence and gameplay rules. Repository maintenance instructions below apply to changes within SND.
 
 ## Authoritative files
+
+Paths below are relative to the SND source root. Prefer the full pinned source tree, including examples, tests and tooling. If a vendored copy omits a referenced file, use the same path in [upstream SND](https://github.com/elithrar/SomethingNeedDoing) at the consumer’s pinned tag or commit, not current main.
 
 - [API.md](API.md): public signatures, Result contracts, callback timing and persistence boundaries. Change it with behavior, not ahead of evidence.
 - [package.json](package.json): version, author, license, consumer package files and ordered runtime files. [Embed.xml](Embed.xml) loads those files in WoW; `tools/check.py` checks drift.
@@ -29,12 +31,11 @@ SND is a vendored WoW microframework. Prefer direct implementation and clear own
 
 ## API and ownership
 
-- Every shared interface needs at least two independently useful consumer implementations before stabilization. Two toy tests do not qualify. Use the third add-on to challenge generalization. Lifecycle migrations do not validate production settings/options behavior; label mocks honestly.
-- Before adding any public API, demonstrate why existing events, scopes, Results, selectors or custom components cannot express two concrete uses clearly. Keep gameplay clocks, queries, route graphs, native integration policy and checkpoint policy in consumers.
+- When extending SND, first check whether existing events, scopes, Results, selectors or custom components solve the requested behavior. Add API only when it makes the implementation clearer. Keep gameplay clocks, queries, route graphs, native integration policy and checkpoint policy in consumers.
 - Keep Lua 5.1, the declared client target and the consuming TOC namespace. No process-wide “latest version wins” registry or dependence on another installed add-on.
 - State follows `Update → Select → Watch`: small plain snapshots, pure selectors and scope-owned observers. Cancel hidden views and create a fresh scope on reopening. Preserve consumer request generations for asynchronous identity.
 - Settings have one owner: declare settings before readiness; omit the adapter for new databases or supply a legacy adapter, mutate through `app:Set`, `app:SetMany` or profile commands and observe with `SelectSettings`. Never mirror a live profile into a second writable store. Transfer every write path together, including previews, drag commits and profile replacement. TOCs determine account/character persistence; adapters preserve schema and recovery policy.
-- Fallible operations return `true, value` or `false, {code, message}`; successful commands return `true, nil`. Declaration-only methods such as Settings and Appearance return no value. Check the boolean. Programmer errors raise; callback errors are reported and contained. Validate ordinary user input at the UI boundary before calling programmer-checked commands. Recovery guards must clear after native failures so the next interaction can retry. Never format arbitrary error objects. Validate dense arrays and copy declarations before installing them.
+- Fallible operations return `true, value` or `false, {code, message}`; successful commands return `true, nil`. Declaration-only methods such as Settings and Appearance return no value. Check the boolean. Programmer errors raise. Transaction callback exceptions return failed Results without publishing; notification callback exceptions are reported without rolling back a successful commit. See API.md for callback-specific contracts. Validate ordinary user input at the UI boundary before calling programmer-checked commands. Recovery guards must clear after native failures so the next interaction can retry. Never format arbitrary error objects. Validate dense arrays and copy declarations before installing them.
 - Validate before publishing. Failed adapters cannot change live globals; unknown future schemas remain untouched. Never execute imported configuration as Lua. Reentrant writes fail rather than becoming hidden queued work.
 
 ## Lifecycle and presentation
@@ -42,18 +43,22 @@ SND is a vendored WoW microframework. Prefer direct implementation and clear own
 - Readiness means restoration succeeded, not that player identity or world APIs are available. Ordinary callbacks wait for readiness.
 - Scoped logout subscribers run once before disposal and may read committed state. Their failures, recursive delivery or failing panel cleanup must not prevent cancellation. Work scheduled during logout is canceled; WoW controls disk persistence.
 - Unused font/layout services must not install listeners. Prefer events and keyed, coalesced work; keep frame allocation, font resolution and repeated text measurement out of animation callbacks. Pre-ready and late activation must both work; disposed instances cannot acquire new resources.
-- Give external callbacks guarded lifetimes, even when the external API offers unregistering. Capability probes must fail before publishing ownership; partial attachment failure must cancel acquired subscribers and remain retryable (see `src/UI.lua` and `src/Scope.lua`). Secure hooks retain inert native dispatchers, never canceled subscriber references.
+- Give external callbacks guarded lifetimes, even when the external API offers unregistering. Complete capability probes before publishing ownership; on attachment failure, cancel acquired subscribers and leave registration retryable (see `src/UI.lua` and `src/Scope.lua`). Secure hooks retain inert native dispatchers, never canceled subscriber references.
 - Declare appearance before readiness. Themes are copied plain definitions: shared semantic colors and borders, optional consumer tokens. `theme`, `font` and `fontSize` settings drive the common path. Do not add inheritance, global registries or alternate selection mechanisms.
 - Register owned surfaces with `ui:Style`, typography with `fonts:Apply`, and semantic colors with `ui:Color`. Fonts preserve explicit product colors. Custom views use `scope:Watch(app:SelectAppearance(...), ...)` to remeasure after fonts settle; the standard options panel handles this itself. Keep gameplay geometry/artwork in its renderer.
 - Use `SetMany` for related changes such as mode+format or placement coordinates; adapters stage `patch` atomically. Profile replacement must invalidate stale gestures even when the profile name or selected values are unchanged.
 - Use ordinary `key` bindings and the existing custom-component parent/scope contract. Reuse frames across opens. Never rebuild menus under input or let stale color/profile/editor callbacks write new settings. Preview values are transient.
 - Secret-value restrictions, forbidden objects and combat/protected actions are separate contracts. Check before inspecting values or changing UI; `pcall` does not make a prohibited operation valid. Do not change protected frames, replace Blizzard scripts, add automatic gameplay retries or collect telemetry.
 
-## Verification and repository hygiene
+## Verification
 
-Run the README commands. Add only the smallest regression that protects a real failure boundary, with its reason beside the test. Exercise the original entry point and recovery: after a native failure, restore the boundary and verify the next action updates actual text, geometry or committed state, not merely that `Open()` succeeds. Cover relevant hide/reopen, profile replacement and late-font transitions; use `tests/run.lua` for existing failure-injection patterns. Rerun optional consumer checks for state, settings, scope or component changes when sibling sources exist; otherwise report the missing evidence.
+For consumer changes, run the add-on’s checks and exercise the affected integration. For SND changes, follow the framework checks below.
 
-Keep source, consumer-facing documentation/examples, package metadata and necessary verification infrastructure. Historical audits and review transcripts belong in PRs or Git history, not permanent parallel specifications. Keep caches, generated archives and scratch work out of source control and verification files out of the consumer package.
+Run the SND README commands. Add only the smallest regression that protects a real failure boundary, with its reason beside the test. Exercise the original entry point and recovery: after a native failure, restore the boundary and verify the next action updates actual text, geometry or committed state, not merely that `Open()` succeeds. Cover relevant hide/reopen, profile replacement and late-font transitions; use `tests/run.lua` for existing failure-injection patterns. Rerun optional consumer checks for state, settings, scope or component changes when sibling sources exist; otherwise report the missing evidence.
+
+## SND repository maintenance
+
+Keep source, consumer-facing documentation/examples, package metadata and necessary verification infrastructure. Historical audits and review transcripts belong in PRs or Git history, not permanent parallel specifications. Keep caches, generated archives and scratch work out of source control. Vendored source may include tests and tooling; only runtime files belong in the TOC/Embed.xml load order.
 
 Keep version, author, description, Apache-2.0 license and load order consistent. Follow the user's current commit/PR authorization; this file adds no release ceremony. Report source inspection, offline checks and in-game observation separately. Passing mocks cannot establish native rendering, input, combat/taint safety or coexistence.
 

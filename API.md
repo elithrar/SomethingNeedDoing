@@ -139,7 +139,7 @@ On restore, normalized globals are installed only for a writable state. Future s
 
 ## 3a. Small reactive state
 
-**Design rule: every interface needs at least two consumer implementations.** Exercise shared contracts against concrete behavior in at least two add-ons before stabilizing them; use all three where applicable. Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable consumer checks](tests/consumers.lua). A consumer adoption must exercise its actual settings writers and custom views; a lifecycle-only migration does not validate those paths.
+Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable consumer checks](tests/consumers.lua). A consumer adoption must exercise its actual settings writers and custom views; a lifecycle-only migration does not validate those paths.
 
 State propagation is explicit: **Update → Select → Watch**. There is no metatable-based property tracking, global store, automatic effect retry, or reactive gameplay state machine.
 
@@ -419,4 +419,4 @@ The implementation is covered by [focused contract tests](tests/run.lua), each w
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 
-Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling. Optional components can grow after two consumers demonstrate a shared contract.
+Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling.
