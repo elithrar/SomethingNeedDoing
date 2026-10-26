@@ -26,7 +26,7 @@ required third-party dependencies. LibSharedMedia is used when available.
 
 - [Installation](#installation)
 - [Examples](#examples)
-- [API](#api)
+- [API reference](API.md)
 - [Design Notes](#design-notes)
 - [Testing](#testing)
 - [Contributing](#contributing)
@@ -54,6 +54,9 @@ SND separately, and one add-on updating its copy doesn't update another's.
 order. It's metadata: you don't need Node.js, npm or LuaRocks to use SND in WoW.
 
 ## Examples
+
+These examples cover common uses. For the full structured API reference, see
+[API.md](API.md).
 
 ### An options panel
 
@@ -181,51 +184,6 @@ Scheduling another `After` with the same key replaces the pending callback.
 Scopes also own recurring timers, additive hooks and guards for external async
 callbacks. Secure hooks can't be removed from WoW; cancellation detaches your
 subscriber from an inert dispatcher.
-
-Scoped `PLAYER_LOGOUT` callbacks run once before disposal, while committed
-settings remain readable. Use them for consumer-owned checkpoints or native
-timer cleanup. SND then cancels owned work, including work scheduled during logout.
-
-## API
-
-The [API reference](API.md) covers signatures, errors and lifecycle details.
-The main entry points are:
-
-| Area | API |
-| --- | --- |
-| Bootstrap | `NewAddon`, `OnReady`, `IsReady` |
-| State | `State`, `Read`, `Update`, `Select`, `scope:Watch` |
-| Settings | `Settings`, `Get`, `Set`, `SelectSettings`, profile commands |
-| Options | `Options`, `Open`, `Close`, `SelectPage`; controls bind by `key` |
-| Ownership | `Scope`, `Event`, `PostHook`, `HookScript`, `After`, `Every`, `Guard`, `Cancel` |
-| Presentation | `ui:Style`, `ui:Border`, `fonts:Apply`, `fonts:Measure`, layout helpers |
-| Diagnostics | `Slash`, `log:Debug`, `Info`, `Warn`, `Error` |
-
-Custom options components receive a positioned parent and a scope for the visible
-page. Implement `Refresh`, `Layout(width)` and `Hide`, and reuse your frames when
-the page opens again. You don't need a separate UI binding language.
-
-### Handling errors
-
-Fallible operations use a small Result tuple: `true, value` or `false, error`.
-Commands return `true, nil`; operations that create a timer, hook or layout
-handle return that handle as the second value:
-
-```lua
-local ok, timer = preview:After(0.15, "refresh", function() ns.Preview:Refresh() end)
-if not ok then
-    app.log:Warn(timer.message, { code = timer.code })
-    return
-end
--- timer:Cancel() cancels this operation; preview:Cancel() cancels the whole scope.
-```
-
-Errors have a stable `code` and a diagnostic `message`. Invalid declarations and
-wrong argument shapes raise programmer errors. Async callback exceptions are
-reported through diagnostics and WoW's error handler. Getters and infallible
-registrations keep their direct return values. See the
-[full contract](API.md#result-and-exception-contract) and
-[0.2 migration notes](CHANGELOG.md) before upgrading a 0.1 consumer.
 
 ## Design Notes
 

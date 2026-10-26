@@ -48,4 +48,4 @@ Keep source, consumer-facing documentation/examples, package metadata and necess
 
 Keep version, author, description, Apache-2.0 license and load order consistent. Follow the user's current commit/PR authorization; this file adds no release ceremony. Report source inspection, offline checks and in-game observation separately. Passing mocks cannot establish native rendering, input, combat/taint safety or coexistence.
 
-When changing a public API—including return values, usage or error handling—update the affected README.md examples and executable examples in the same change. Update this file where its guidance is affected; keep API details in the user documentation rather than duplicating them here.
+When changing a public API—including return values, usage or error handling—update API.md and the affected README.md examples and executable examples in the same change. Update this file where its guidance is affected; keep API details in the user documentation rather than duplicating them here.
