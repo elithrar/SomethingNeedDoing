@@ -28,6 +28,7 @@ end
 function Adapter:Prepare(state,operation,fields)
     local values=copy(state.values)
     if operation.kind=='set'then put(values,operation.path,copy(operation.value))
+    elseif operation.kind=='patch'then for path,value in pairs(operation.values)do put(values,path,copy(value))end
     elseif operation.kind=='reset'then values={};for path,field in pairs(fields)do put(values,path,copy(field.default))end
     else return false,{code='unsupported'}end
     return true, {state={values=values,profiles={operations={reset=true}}},saved={[global]={version=1,values=copy(values)}}}

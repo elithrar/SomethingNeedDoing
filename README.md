@@ -19,7 +19,7 @@ add-on's behavior in the add-on. SND grew out of
 [AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
 consumers with enough shared plumbing to justify a small library.
 
-Version **0.3.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
+Version **0.4.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
 required third-party dependencies. LibSharedMedia is used when available.
 
 ## Contents
@@ -42,7 +42,6 @@ Copy `src/`, `Embed.xml` and `LICENSE` into
 ## Title: YourAddon
 ## SavedVariables: YourAddonDB
 Libs\SomethingNeedDoing\Embed.xml
-SettingsAdapter.lua
 Core.lua
 ```
 
@@ -61,8 +60,7 @@ These examples cover common uses. For the full structured API reference, see
 ### An options panel
 
 Here's the common case: a couple of saved settings and a panel to edit them.
-Copy [examples/SettingsAdapter.lua](examples/SettingsAdapter.lua) to the
-`SettingsAdapter.lua` entry in the TOC above, then put this in `Core.lua`:
+Put this in `Core.lua`:
 
 ```lua
 local ADDON, ns = ...
@@ -70,26 +68,13 @@ local app = ns.SomethingNeedDoing:NewAddon(ADDON)
 
 app:Settings({
     savedVariables = { "YourAddonDB" },
-    adapter = ns.CreateSettingsAdapter("YourAddonDB"),
     fields = {
         scale = { type = "number", default = 1, min = 0.5, max = 2 },
         font = { type = "font", default = "Game tooltip" },
     },
 })
 
-local options = app:Options({
-    title = "YourAddon",
-    pages = {{
-        id = "appearance", label = "Appearance",
-        sections = {{
-            title = "Appearance",
-            controls = {
-                { type = "slider", key = "scale", label = "Scale", step = 0.05 },
-                { type = "font", key = "font", label = "Font" },
-            },
-        }},
-    }},
-})
+local options = app:Options() -- Settings controls and a Profiles page.
 
 local registered, err = app:Slash("/youraddon", function()
     local opened, failure = options:Toggle()
@@ -117,9 +102,40 @@ end)
 mean that player identity or world APIs are ready; those still belong to your
 add-on's initialization.
 
-The example adapter handles one settings table. For an existing add-on, provide
-an adapter for its existing schema and migrations. SND doesn't choose whether
-your settings are account-wide or per-character: your TOC does.
+SND supplies versioned profile storage when you omit `adapter`. Existing add-ons
+can provide an adapter for their current schema and migrations; see
+[examples/SettingsAdapter.lua](examples/SettingsAdapter.lua). Your TOC determines
+whether the saved data is account-wide or per-character. Use explicit options
+pages when you want to control grouping, labels and layout.
+
+### Appearance across your add-on
+
+Modern and WoW Forever presets supply shared surface, border, accent, text and
+muted colors. A `theme` setting selects the active definition. Fonts and styles
+apply to any registered, add-on-owned surface—not just the options panel.
+
+```lua
+-- Declare before readiness. Omit this to use the two built-in presets.
+app:Appearance({
+    defaultTheme = "modern",
+    themes = { modern = ns.SomethingNeedDoing.Themes.modern,
+               forever = ns.SomethingNeedDoing.Themes.forever },
+})
+
+-- In your view constructor, check each native resource Result.
+local styled, styleError = app.ui:Style(ns.window, "dialog")
+if not styled then app.log:Warn(styleError.message) end
+local applied, fontError = app.fonts:Apply(ns.title, "heading")
+if not applied then app.log:Warn(fontError.message) end
+local colored, colorError = app.ui:Color(ns.title, "accent")
+if not colored then app.log:Warn(colorError.message) end
+```
+
+Typography and color are separate: applying a font preserves an explicit XP-bar
+or navigation color. Register a semantic color when it should follow the theme.
+Custom views watch `SelectAppearance` to remeasure after font resolution settles;
+standard options controls do that themselves. [The executable example](examples/Consumer.lua)
+includes a custom theme, shared typography, profile controls and a custom view.
 
 ### Updating state
 
