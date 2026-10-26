@@ -52,6 +52,13 @@ SND separately, and one add-on updating its copy doesn't update another's.
 [package.json](package.json) records the version, license, author and Lua load
 order. It's metadata: you don't need Node.js, npm or LuaRocks to use SND in WoW.
 
+For agent-assisted development, keep [API.md](API.md) and [AGENTS.md](AGENTS.md)
+from your pinned SND revision available in your development checkout. A vendored
+`AGENTS.md` may not apply outside its directory; add this to your root guidance,
+with paths to that copy:
+
+> For SND integration and native UI changes, read SND's API.md and AGENTS.md. Preserve this add-on's client target, persistence rules and gameplay behavior.
+
 ## Examples
 
 These examples cover common uses. For the full structured API reference, see
