@@ -2,7 +2,7 @@
 
 **Status: proposed, unimplemented.** This document stubs the initial contract; the examples are design sketches, not a working SDK. API names and adapter shapes may change before the first release. See [the extraction audit](EXTRACTION-AUDIT.md) for source candidates and migration boundaries.
 
-SND supplies registration, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
+SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
 ## 1. Packaging and instance ownership
 
@@ -75,13 +75,13 @@ local ok, err = app:Set("fontSize", 16)
 | --- | --- |
 | `app:Settings(spec)` | One declaration per app; names must already be declared in the consumer's TOC. Multiple variables support existing profile layouts. |
 | `app:Get(path) -> value` | Validated active settings; table values are defensive copies. Reading before readiness is an error. |
-| `app:Set(path, value) -> boolean, error` | Validate, prepare, commit, then notify. Unknown fields, unreadable values, invalid types, and read-only stores fail without mutation. |
+| `app:Set(path, value, expectedRevision?) -> boolean, error` | Validate, prepare, commit, then notify. Unknown fields, unreadable values, invalid types, and read-only stores fail without mutation. |
 | `app:OnSettingsChanged(callback) -> subscription` | Receive committed changes; listener failures cannot roll back a successful commit. |
 | `change:Touches(...) -> boolean` | Whether any named field changed. Profile switches also carry `profileChanged = true`. |
 
 Initial field types: `boolean`, finite `number`, finite `integer`, bounded `string`, `enum` with explicit values, `font` as a saved preference name, and RGB `color` with components in `[0,1]`. Dotted paths access nested settings; literal dots in field names are not supported initially. Reject invalid interactive input; legacy normalization/clamping belongs to the migration adapter. Missing fonts retain their requested preference while the renderer falls back.
 
-Change records contain `revision`, `reason` (`set`, `switch`, `duplicate`, `copy`, `reset`, or `bind`), `keys` as a set of paths, and `profileChanged`. No-op writes emit nothing. Reentrant writes from listeners are queued until current notification completes, with a bounded loop guard. Options refreshes must not feed writes back into controls.
+Change records contain `revision`, `reason` (`set`, `switch`, `duplicate`, `copy`, `reset`, or `bind`), `keys` as a set of paths, and `profileChanged`. No-op writes emit nothing. Reentrant writes from listeners are rejected with `reentrant`; schedule intentional follow-up work explicitly (see section 3a). Options refreshes must not feed writes back into controls.
 
 ### Persistence adapter stub
 
@@ -105,6 +105,82 @@ end
 `state` supplies `values` (the active settings table), `readOnly`, `activeProfile` (optional name), and a `profiles` descriptor containing names and supported operations. It can carry opaque adapter-owned data for the existing database layout. SND validates the complete candidate before replacing declared globals and its current state, without yielding or calling listeners between assignments. All callbacks run afterward. `Prepare` receives `{ kind = "set", path = ..., value = ... }` or one of the profile operations below. The adapter remains responsible for preserving unrelated fields and SavedVariables aliases.
 
 On restore, normalized globals are installed only for a writable state. Future schemas remain untouched and can expose read-only defaults; an adapter may instead return an explicit incompatible-schema error and prevent readiness. Identity-dependent stores can expose defaults read-only with `needsCharacter = true` until the add-on calls `BindCharacter`. Thus SND does not move XPIsland's player initialization from world entry to file load.
+
+## 3a. Small reactive state
+
+**Design rule: every interface needs at least two consumer implementations.** Exercise shared contracts against concrete behavior in at least two add-ons before stabilizing them; use all three where applicable. Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable exercises and findings](STATE-EXERCISES.md).
+
+State propagation is explicit: **Update → Select → Watch**. There is no metatable-based property tracking, global store, automatic effect retry, or reactive gameplay state machine.
+
+```lua
+local search = app:State({ query = "", searching = false, matches = {} })
+local results = search:Select(function(snapshot)
+    return { searching = snapshot.searching, matches = snapshot.matches }
+end)
+
+-- Create a fresh scope each time this view opens; cancel it on hide.
+local view = app:Scope("search-view")
+view:Watch(results, function(value, previous, revision)
+    ns.SearchUI:Render(value)
+end)
+
+local ok, err = search:Update(function(draft)
+    draft.query = "Ironforge"
+    draft.searching = true
+    draft.matches = {}
+end)
+```
+
+### Six entry points, one ownership model
+
+| API | Contract |
+| --- | --- |
+| `app:State(initial, spec?) -> state` | Create an app-owned, memory-only plain-data store. Optional `spec.validate(candidate) -> boolean, error` validates initial data and each candidate. It cannot normalize or mutate committed data. |
+| `state:Read() -> snapshot, revision` | Defensive copy and monotonically increasing store-local revision, starting at zero. |
+| `state:Update(mutator, expectedRevision?) -> boolean, error` | Copy current state, run the mutator, validate, commit once, then notify. Optional revision rejects stale writes before running the mutator. |
+| `state:Select(project) -> selection` | Describe a pure projection of this store. A selection is not another mutable store and has no scheduler or permanent subscription. |
+| `scope:Watch(selection, callback) -> subscription` | Deliver the current selected value once on activation, then changed values after commits. Callback receives `(value, previous, revision)`; previous is nil on initial delivery. Scope/handle cancellation detaches it. |
+| `app:SelectSettings(project) -> selection` | Project directly from committed active settings, using the same Watch contract. No mirrored settings store. Project receives `(values, context)` where context contains `activeProfile`, `readOnly`, and `needsCharacter`. |
+
+State may be declared before readiness; watches declared then activate after successful restoration. Watches registered after readiness deliver the initial value synchronously before returning. Do not capture the not-yet-returned subscription handle inside that first callback. A hidden view cancels its scope and creates a fresh one on reopen; initial delivery catches up without replaying missed changes. State lifetime is the app lifetime; selectors subscribe only while watched. App teardown releases stores and subscriptions.
+
+### Update and equality rules
+
+- Data consists of readable nil/boolean/string/finite-number values and acyclic plain tables with string or finite integer keys. No frames, functions, userdata, metatables, secret values, or shared-reference identity contracts. Domain objects and large catalogs stay outside. A nil field is absent, as in Lua.
+- The mutator edits a private draft and must not yield or perform side effects. Return `false, error` to reject; a nil return accepts the draft. Exceptions, validation failure, and stale revisions leave state and revision untouched. Retained drafts, reads, selector inputs, validator inputs, and callback values cannot mutate live state.
+- A structurally equal candidate is a successful no-op: no revision increment or notification. Scalars compare by value; plain tables compare recursively by keys and values, ignoring insertion order. Selections use the same rule, so returning a small new record does not trigger spurious renders. Nil is a valid selected value. No configurable comparator in v0.
+- All active projections for that store reevaluate on a commit; only changed selections notify. Selectors are pure and cannot query mutable external state as an undeclared dependency. Publish a small domain-owned revision or derived value when external data changes. There is no automatic dependency tracking between stores or selector chaining in v0.
+- One Update is one transaction. Keep fields that must change together in the same store. No cross-store transaction, batching API, or implicit next-frame coalescing. Distinct stores are appropriate when their changes are independent.
+- Writes during any SND mutator, validator, selector, or change callback are rejected with `reentrant`, including writes to another state/settings store in the same app. This replaces the earlier queued-settings-write proposal: success must mean committed, not merely queued. When an intentional follow-up is required, schedule it explicitly through `scope:After(0, key, callback)` and retain the consumer's loop prevention.
+- Watchers run synchronously in registration order after publication. A watcher failure is reported and cannot roll back a commit or prevent other watchers from running. A failed projection retains its last successful value and can retry on the next commit. Cancellation during delivery suppresses later canceled subscribers; registration during delivery takes its initial snapshot immediately and joins subsequent commits. No yielding callbacks.
+
+Use small display snapshots, not per-frame copies of an XP history, navigation graph, or quest catalog. Animation interpolation stays in the renderer; domain clocks and reconciliation stay in the model. This first design deliberately trades copying and structural comparison for predictable ownership. Benchmark actual store sizes before promoting it to a production runtime.
+
+### Settings, editors, and UI bindings
+
+```lua
+local appearance = app:SelectSettings(function(values, context)
+    return { font = values.font, scale = values.scale,
+        profile = context.activeProfile, readOnly = context.readOnly }
+end)
+view:Watch(appearance, function(value)
+    ns.UI:ApplyAppearance(value)
+end)
+```
+
+`SelectSettings` uses the existing settings revision and transaction owner. Watchers see the fully committed profile and values. Equal-value profile switches notify only projections that include identity/status; the existing `OnSettingsChanged` still provides operation reasons and `profileChanged`. Both notification APIs read the same commit, and writes from either are rejected during dispatch. Do not register both to perform the same refresh.
+
+Extend `app:Set(path, value, expectedRevision?)` with the same stale-revision check. A settings watcher receives the revision that an editor can capture at opening; any intervening committed change invalidates that edit. SND's built-in editor already owns this token. Color previews stay outside committed state and continue using the explicit preview callback. Preview cancellation, menus, and gesture cleanup follow the existing profile rules.
+
+Built-in options controls remain bound with `key`; they do not need a second state binding language. The shell reevaluates `enabled(app)` and `visible(app)` on committed settings changes. These predicates must read settings only; custom components watch domain state through their supplied scope. Custom component scopes activate while their page is visible, cancel on hide, and are replaced on reopening. The shell calls the retry-safe `create(parent, app, scope)` again to rebind reused frames to the new scope, then Refresh/Layout. Consumers must not keep an old canceled scope in a reused frame script. Native menu safety still defers actual layout/menu rebuilding until release; reactivity does not permit rebuilding under input.
+
+### SavedVariables boundary
+
+State is not automatically persisted. Settings already use the declared globals and Restore/Prepare adapter above; they are one state owner, not a settings store copied into another reactive store. TOC declarations remain authoritative for account versus character scope. No SND-owned global database is introduced.
+
+For domain SavedVariables, initially retain the existing loader/command/checkpoint owner. Validate and commit there, then publish a small read-only UI projection through a consumer-owned state store. A failed domain command must not publish a success projection. Treat a failed projection update as an integration error and reconcile from the authoritative model; this bridge is not a cross-store transaction. No module may mutate the same SavedVariables through both a legacy owner and SND.
+
+The previously discussed `SavedVariables`/`Store` convenience registry is **not yet part of v0**. FAU recovery/capacity and XP checkpoint behavior require substantially different policies; a unified persistence adapter needs two complete migrations before its signatures are stable. Future-schema preservation, schema migrations, recovery records, character identity, and when to checkpoint remain explicit consumer responsibilities. Successful in-memory assignment never promises a disk flush; WoW controls persistence at logout/reload.
 
 ## 4. Profiles
 
@@ -253,7 +329,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Initial implementation gates
 
-1. Extract theme/fonts and owned lifecycle primitives with tests before migrating consumers.
+1. Extract theme/fonts and owned lifecycle primitives with tests before migrating consumers. Validate the small state contract using at least two concrete consumer integrations; retain all three design exercises as fixtures.
 2. Build the retryable options shell and declarative bindings; preserve native menus and color-picker callback ordering.
 3. Add profile adapters for each current schema without converting account/character scope.
 4. Adopt screen helpers where coordinate contracts match; keep bespoke docking, animation, tooltip collision policy, and world-map projection outside the core.
@@ -261,4 +337,4 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 Required scenarios include future schemas, unavailable identity, failed construction/retry without frame growth, stale color callbacks, profile changes during dragging, late/missing fonts, menus open during refresh, fractional scales, narrow/short displays, repeated hook registration, timer replacement/cancellation, and hidden idle CPU. Source/mocks cannot establish native rendering, combat/taint safety, or actual coexistence.
 
-Deferred: general widget DSL, layout engine, generic state store, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling. Optional components can grow after two consumers demonstrate a shared contract.
+Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling. Optional components can grow after two consumers demonstrate a shared contract.
