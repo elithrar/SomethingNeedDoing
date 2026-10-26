@@ -71,7 +71,7 @@ SND._install[#SND._install + 1] = function(app)
         local edge=role=='dialog' and theme.border or 'thin'
         frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8',edgeFile=edges[edge],edgeSize=edge=='thin' and 1 or edge=='dialog' and 16 or 12,
             insets={left=3,right=3,top=3,bottom=3}})
-        frame:SetBackdropColor(unpack(theme.colors.surface));frame:SetBackdropBorderColor(unpack(theme.colors[styled[frame].hover and 'accent' or 'border']))
+        frame:SetBackdropColor(unpack(theme.colors.surface));frame:SetBackdropBorderColor(unpack(theme.colors[styled[frame].hover and (not frame.IsEnabled or frame:IsEnabled()) and 'accent' or 'border']))
     end
     function ui:Border(frame,kind)
         I.check(not app._disposed,'appearance service is disposed')
@@ -94,12 +94,20 @@ SND._install[#SND._install + 1] = function(app)
         local record=styled[frame]
         local fresh=not record
         if not record then
+            local disable=false
+            if role=='button' or role=='tab' then
+                local ok,result=pcall(function()return frame.HasScript and frame:HasScript('OnDisable') or not frame.HasScript and frame.IsEnabled~=nil end)
+                if not ok then return false,I.error('unavailable',result)end
+                disable=result
+            end
             record={role=role};styled[frame]=record
             if role=='button' or role=='tab' then
                 local owner=app:Scope();record.owner=owner
-                for _,event in ipairs({'OnEnter','OnLeave'})do
+                local events={'OnEnter','OnLeave','OnHide'}
+                if disable then events[#events+1]='OnDisable'end
+                for _,event in ipairs(events)do
                     local entering=event=='OnEnter'
-                    local ok,err=owner:HookScript(frame,event,function(self)record.hover=entering;paint(self,record.role)end)
+                    local ok,err=owner:HookScript(frame,event,function(self)record.hover=entering and (not self.IsEnabled or self:IsEnabled());paint(self,record.role)end)
                     if not ok then owner:Cancel();styled[frame]=nil;return false,err end
                 end
             end

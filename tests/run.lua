@@ -91,6 +91,12 @@ test('options construction and menu lifetime','failed builds are retryable and s
     local check=panel._pool['appearance:1:2'];check:SetChecked(false);check.scripts.OnClick(check);assert(a:Get('enabled')==false)
     panel._pool['appearance:1:3']:SetValue(1.4);assert(a:Get('scale')==1.4)
     local count=#W.frames;panel:Close();assert(panel:Open());assert(#W.frames==count)
+    -- A native caption failure must release its recursion guard so pooled text
+    -- can recover on the next refresh instead of silently freezing forever.
+    local setWidth=d.Text.SetWidth
+    d.Text.SetWidth=function()error('caption allocation failed')end
+    assert(not panel:Refresh());assert(d._captioning==nil)
+    d.Text.SetWidth=setWidth;assert(panel:Open());assert(d._fullCaption=='Missing font' and not d._captioning)
 end)
 
 test('font and geometry native boundaries','accepts void SetFont results and clamps using effective scale; refuses protected frames',function()
@@ -301,6 +307,22 @@ test('appearance ownership and custom surfaces','themes must propagate beyond op
     local changes,latest=0,nil;local owner=a:Scope();owner:Watch(a:SelectAppearance(function(v)return v end),function(v)changes=changes+1;latest=v;assert(product.color[1]==.1)end)
     boot(a);local before=changes;assert(a:Set('theme','custom'));assert(changes==before+1 and latest.theme.tokens.track[1]==.1 and text.color[1]==.2)
     frame.scripts.OnEnter(frame);assert(frame.border[1]==.2);assert(a:Set('theme','forever'));assert(frame.border[1]==sdk.Themes.forever.colors.accent[1])
+    -- Hiding or disabling a hovered surface must not retain the highlight.
+    frame:Hide();frame:Show();assert(a.ui:Style(frame,'button'));assert(frame.border[1]==sdk.Themes.forever.colors.border[1])
+    local button=CreateFrame('Button',nil,UIParent,'BackdropTemplate')
+    button.IsEnabled=function(self)return self.enabled end;button.HasScript=function(_,event)return event=='OnDisable' end
+    assert(a.ui:Style(button,'button'));button.scripts.OnEnter(button);button.enabled=false;button.scripts.OnDisable(button)
+    button.scripts.OnEnter(button);button.enabled=true;assert(a.ui:Style(button,'button'));assert(button.border[1]==sdk.Themes.forever.colors.border[1])
+    local ordinary=CreateFrame('Frame',nil,UIParent,'BackdropTemplate');ordinary.HasScript=function(_,event)return event~='OnDisable' end
+    assert(a.ui:Style(ordinary,'button'));assert(not ordinary.scripts.OnDisable)
+    local probe=CreateFrame('Button',nil,UIParent,'BackdropTemplate');probe.HasScript=function()error('native capability failure')end
+    local safe,accepted=pcall(a.ui.Style,a.ui,probe,'button');assert(safe and not accepted)
+    probe.HasScript=function()return true end;assert(a.ui:Style(probe,'button'));probe.scripts.OnEnter(probe);assert(probe.border[1]==sdk.Themes.forever.colors.accent[1])
+    -- Roll back earlier hooks when a later lifecycle hook cannot attach.
+    local partial=CreateFrame('Button',nil,UIParent,'BackdropTemplate');local hook=partial.HookScript
+    partial.HookScript=function(self,event,fn)if event=='OnHide' then error('hide hook unavailable')end;return hook(self,event,fn)end
+    assert(not a.ui:Style(partial,'button'));local entries=#a.log:Entries();partial.scripts.OnEnter(partial);assert(#a.log:Entries()==entries and not partial.border)
+    partial.HookScript=hook;assert(a.ui:Style(partial,'button'));partial.scripts.OnEnter(partial);assert(partial.border[1]==sdk.Themes.forever.colors.accent[1])
     assert(a:Set('fontSize',16));assert(text.fontSize==16.25 and product.fontSize==17.25)
     local protectedCalls=0;frame.protected=true;frame.SetBackdrop=function()protectedCalls=protectedCalls+1 end
     assert(a:Set('theme','custom'));frame.scripts.OnEnter(frame);assert(protectedCalls==0)
@@ -319,7 +341,32 @@ test('generated options and settled font layout','default panels must bind valid
     menu:CloseMenu();W.tick(.01);assert(not panel._refreshPending)
     menu:OpenMenu();panel.bar:SetMinMaxValues(0,100);panel.bar:SetValue(10);assert(not menu:IsMenuOpen())
     local count=#W.frames;panel:Close();assert(panel:Open());assert(#W.frames==count)
-    assert(panel:SelectPage('profiles'));assert(a.profiles:Duplicate('Other'));assert(a.profiles:Active()=='Other')
+    assert(panel:SelectPage('profiles'))
+    -- Ordinary empty fields must produce feedback, while direct API misuse
+    -- remains a programmer error. Missing copy selection must never confirm.
+    panel._pool['profile-add'].scripts.OnClick();assert(panel._texts['profile-status']:GetText()=='Enter a profile name.')
+    panel._pool['profile-name']:SetText('   ');panel._pool['profile-add'].scripts.OnClick();assert(panel._texts['profile-status']:GetText()=='Enter a profile name.')
+    panel._pool['profile-copy-button'].scripts.OnClick();assert(not panel._confirm and panel._texts['profile-status']:GetText()=='Choose a profile.')
+    assert(not pcall(function()a.profiles:Duplicate('')end));assert(not pcall(function()a.profiles:CopyFrom(nil)end))
+    panel._pool['profile-name']:SetText('Other');panel._pool['profile-add'].scripts.OnClick();assert(a.profiles:Active()=='Other' and not panel._profileError)
+    -- Full captions fit fixed geometry after native font metrics change. This
+    -- includes shell tabs/close and paired confirmation buttons, not just rows.
+    panel._pool['profile-reset'].scripts.OnClick()
+    local confirm=panel._pool['profile-confirm'];local count=#W.frames
+    for _,button in pairs(panel._buttons)do
+        button.text.GetUnboundedStringWidth=function(self)return #self:GetText()*15 end
+    end
+    assert(a:Set('theme','modern'))
+    panel._pool['profile-reset'].scripts.OnClick()
+    for _,button in pairs(panel._buttons)do
+        local label=button.text;assert(label.scale>0 and label.scale<=1)
+        assert(label:GetUnboundedStringWidth()*label.scale<=button:GetWidth()-12+.001)
+        assert(label:GetWidth()*label.scale<=button:GetWidth()-12+.001)
+        assert(label:GetHeight()*label.scale<=button:GetHeight()-6+.001)
+    end
+    assert(confirm.text:GetText()=='Confirm replacement' and #W.frames==count)
+    local click=confirm.scripts.OnClick;panel:Close();click();assert(a.profiles:Active()=='Other')
+    assert(panel:Open('profiles'))
     local frameName=a.name..'_SND_Options';local found=false
     for _,name in ipairs(UISpecialFrames)do if name==frameName then found=true end end;assert(found and _G[frameName]==panel.frame)
     panel._confirm={kind='reset'};_G[frameName]:Hide();assert(not panel:IsShown() and panel._confirm==nil and panel._view==nil)
