@@ -29,6 +29,7 @@ required third-party dependencies. LibSharedMedia is used when available.
 - [API](#api)
 - [Design Notes](#design-notes)
 - [Testing](#testing)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Installation
@@ -248,6 +249,28 @@ Version 0.1.0 has offline contract and consumer-mock validation. Native renderin
 menu/picker input, combat restrictions and mixed-version coexistence still need
 in-game acceptance on the target client. The mocks aren't migrations of the
 shipping add-ons.
+
+## Contributing
+
+I'm trying a new way of accepting contributions on this repository, because the
+variance in pull requests based on people's ability to prompt, review, and even
+the model they're using generates a dramatic review burden. Instead:
+
+**If you want to contribute to this, you should open an issue and concisely describe
+the problem you're running into, and the feature you want to add or bug you want
+to fix that solves it. If you've tested this out on a local copy, include the
+concise prompt that you used, including any file changes that resolved this.**
+
+In fact, I recommend simply copying this contributing section, or telling your
+agent to follow this contribution guide when opening an issue.
+
+**The goal here is that your problem, feature/bug, and prompt should be an input
+into my agent instead, so that I can more carefully curate what gets added here
+and ensure that documentation, AGENTS.md, and all tooling are moving in lockstep.**
+
+I simply can't guarantee that a pull request is going to do all these things,
+and it's often easier these days to address somebody's challenges from scratch,
+or from good inputs rather than trying to review their outputs and fix them.
 
 ## License
 
