@@ -88,7 +88,11 @@ local options = app:Options({
     }},
 })
 
-app:Slash("/youraddon", function() options:Toggle() end)
+local registered, err = app:Slash("/youraddon", function()
+    local opened, failure = options:Toggle()
+    if not opened then app.log:Warn(failure.message) end
+end)
+if not registered then app.log:Warn(err.message) end
 ```
 
 The controls read their bounds and defaults from the field declarations. A
@@ -159,10 +163,15 @@ Use a scope when several callbacks belong to the same view or operation:
 
 ```lua
 local preview = app:Scope("reward-preview")
-preview:Event("GET_ITEM_INFO_RECEIVED", function(itemID, success)
+local subscribed, err = preview:Event("GET_ITEM_INFO_RECEIVED", function(itemID, success)
     if success then ns.Preview:RefreshItem(itemID) end
 end)
-preview:After(0.15, "refresh", function() ns.Preview:Refresh() end)
+if not subscribed then app.log:Warn(err.message) end
+
+local scheduled, timerOrError = preview:After(0.15, "refresh", function()
+    ns.Preview:Refresh()
+end)
+if not scheduled then app.log:Warn(timerOrError.message) end
 
 -- Closing the preview cancels its subscriptions and pending work.
 -- Call preview:Cancel() from the preview's close handler.
@@ -172,6 +181,10 @@ Scheduling another `After` with the same key replaces the pending callback.
 Scopes also own recurring timers, additive hooks and guards for external async
 callbacks. Secure hooks can't be removed from WoW; cancellation detaches your
 subscriber from an inert dispatcher.
+
+Scoped `PLAYER_LOGOUT` callbacks run once before disposal, while committed
+settings remain readable. Use them for consumer-owned checkpoints or native
+timer cleanup. SND then cancels owned work, including work scheduled during logout.
 
 ## API
 

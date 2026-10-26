@@ -47,3 +47,5 @@ Run the README commands. Add only the smallest regression that protects a real f
 Keep source, consumer-facing documentation/examples, package metadata and necessary verification infrastructure. Historical audits and review transcripts belong in PRs or Git history, not permanent parallel specifications. Keep caches, generated archives and scratch work out of source control and verification files out of the consumer package.
 
 Keep version, author, description, Apache-2.0 license and load order consistent. Follow the user's current commit/PR authorization; this file adds no release ceremony. Report source inspection, offline checks and in-game observation separately. Passing mocks cannot establish native rendering, input, combat/taint safety or coexistence.
+
+When changing a public API—including return values, usage or error handling—update the affected README.md examples and executable examples in the same change. Update this file where its guidance is affected; keep API details in the user documentation rather than duplicating them here.
