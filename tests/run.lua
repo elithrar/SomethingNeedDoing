@@ -346,7 +346,7 @@ test('generated options and settled font layout','default panels must bind valid
     -- remains a programmer error. Missing copy selection must never confirm.
     panel._pool['profile-add'].scripts.OnClick();assert(panel._texts['profile-status']:GetText()=='Enter a profile name.')
     panel._pool['profile-name']:SetText('   ');panel._pool['profile-add'].scripts.OnClick();assert(panel._texts['profile-status']:GetText()=='Enter a profile name.')
-    panel._pool['profile-copy-button'].scripts.OnClick();assert(not panel._confirm and panel._texts['profile-status']:GetText()=='Choose a profile.')
+    panel._confirm={kind='reset'};panel._pool['profile-copy-button'].scripts.OnClick();assert(not panel._confirm and panel._texts['profile-status']:GetText()=='Choose a profile.')
     assert(not pcall(function()a.profiles:Duplicate('')end));assert(not pcall(function()a.profiles:CopyFrom(nil)end))
     panel._pool['profile-name']:SetText('Other');panel._pool['profile-add'].scripts.OnClick();assert(a.profiles:Active()=='Other' and not panel._profileError)
     -- Full captions fit fixed geometry after native font metrics change. This

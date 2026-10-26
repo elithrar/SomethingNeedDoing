@@ -289,6 +289,7 @@ SND._install[#SND._install + 1] = function(app)
             -- Profile actions are explicit commands; confirmation lives in this page.
             local parent=self.body;local y=44
             local function command(method,name)
+                self._confirm=nil
                 -- Empty edit fields and unselected menus are ordinary user input,
                 -- not programmer calls to the stricter public profile commands.
                 if method~='Reset' and (type(name)~='string' or not name:find('%S')) then
