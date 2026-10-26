@@ -19,7 +19,7 @@ add-on's behavior in the add-on. SND grew out of
 [AsTheCrowFlies](https://github.com/elithrar/AsTheCrowFlies): three different
 consumers with enough shared plumbing to justify a small library.
 
-Version **0.4.0** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
+Version **0.4.1** targets **WoW Forever, interface 16001, and Lua 5.1**. It has no
 required third-party dependencies. LibSharedMedia is used when available.
 
 ## Contents
@@ -34,8 +34,9 @@ required third-party dependencies. LibSharedMedia is used when available.
 
 ## Installation
 
-Copy `src/`, `Embed.xml` and `LICENSE` into
-`YourAddon/Libs/SomethingNeedDoing/`, and load SND before your add-on's modules:
+Vendor a pinned SND source tree into `YourAddon/Libs/SomethingNeedDoing/`,
+including its documentation, examples, tests and tooling. Only the runtime files
+are loaded by WoW; load SND before your add-on’s modules:
 
 ```text
 ## Interface: 16001
@@ -51,6 +52,13 @@ SND separately, and one add-on updating its copy doesn't update another's.
 
 [package.json](package.json) records the version, license, author and Lua load
 order. It's metadata: you don't need Node.js, npm or LuaRocks to use SND in WoW.
+
+For agent-assisted development, keep [API.md](API.md) and [AGENTS.md](AGENTS.md)
+from your pinned SND revision available in your development checkout. A vendored
+`AGENTS.md` may not apply outside its directory; add this to your root guidance,
+with paths to that copy:
+
+> For SND integration and native UI changes, read SND's API.md and AGENTS.md. Preserve this add-on's client target, persistence rules and gameplay behavior.
 
 ## Examples
 
@@ -223,9 +231,6 @@ A few decisions are worth making explicit:
   remain consumer-owned. Assigning SavedVariables doesn't force a disk flush.
 - **Native UI has its own lifecycle.** Open menus keep input ownership, color
   previews remain transient, and protected frames aren't automatically moved.
-- **Every interface needs at least two implementations.** Shared APIs should
-  earn their place through concrete consumers. The three-add-on exercise is how
-  we check that, rather than adding abstractions for hypothetical add-ons.
 
 SND doesn't own gameplay state machines, world-map geometry, animation clocks or
 provider data. Those are the parts that make your add-on your add-on.

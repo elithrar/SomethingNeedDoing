@@ -1,6 +1,6 @@
 {
   "name": "somethingneeddoing",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A microframework for building World of Warcraft addons. Registration, options panels & window chrome, font handling, slash commands, event handling & logging.",
   "author": {
     "name": "Matt Silverlock",
@@ -18,8 +18,13 @@
     "Embed.xml",
     "LICENSE",
     "API.md",
+    "AGENTS.md",
     "README.md",
-    "examples/"
+    "examples/",
+    "tests/",
+    "tools/",
+    "package.json",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "lua5.1 tests/run.lua",

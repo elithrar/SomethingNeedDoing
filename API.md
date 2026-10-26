@@ -1,6 +1,6 @@
-# SomethingNeedDoing API — 0.4.0
+# SomethingNeedDoing API — 0.4.1
 
-**Status: initial implementation, version 0.4.0.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
+**Status: initial implementation, version 0.4.1.** The runtime lives in `src/` and loads through `Embed.xml`. Offline contract and three-consumer mock checks pass; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
 SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
@@ -139,7 +139,7 @@ On restore, normalized globals are installed only for a writable state. Future s
 
 ## 3a. Small reactive state
 
-**Design rule: every interface needs at least two consumer implementations.** Exercise shared contracts against concrete behavior in at least two add-ons before stabilizing them; use all three where applicable. Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable consumer checks](tests/consumers.lua). A consumer adoption must exercise its actual settings writers and custom views; a lifecycle-only migration does not validate those paths.
+Mock integrations provide design evidence, not completed migrations or live-client acceptance. See [the executable consumer checks](tests/consumers.lua). A consumer adoption must exercise its actual settings writers and custom views; a lifecycle-only migration does not validate those paths.
 
 State propagation is explicit: **Update → Select → Watch**. There is no metatable-based property tracking, global store, automatic effect retry, or reactive gameplay state machine.
 
@@ -234,7 +234,7 @@ app.profiles:Reset()
 | `profiles:CopyFrom(name)` | Replace active settings from another profile, retaining the active name. |
 | `profiles:Reset()` | Reset the active settings to validated defaults. |
 
-Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.4.0.
+Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.4.1.
 
 Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This replaces preview-then-rollback writes; the focused picker test covers native hide-before-accept and stale callbacks.
 
@@ -419,4 +419,4 @@ The implementation is covered by [focused contract tests](tests/run.lua), each w
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 
-Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling. Optional components can grow after two consumers demonstrate a shared contract.
+Deferred: general widget DSL, layout engine, deep observable proxies, cross-store transactions, generic domain persistence registry, cache/query framework, automatic gameplay retries, profile import/export, docking, minimap launchers, tooltip inspection, and release tooling.
