@@ -83,7 +83,7 @@ SND._install[#SND._install + 1] = function(app)
             label:ClearAllPoints();label:SetPoint('CENTER');label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE')
         end
         local function button(id,parent,label,action)
-            local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(140,26);requireResource(app.ui:Style(b,'button'))
+            local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(230,26);requireResource(app.ui:Style(b,'button'))
             b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);return b
         end
         local function input(id,parent,width)
@@ -351,7 +351,7 @@ SND._install[#SND._install + 1] = function(app)
             end
             if operations.duplicate then
                 local input=input('profile-name',parent,220);input:SetPoint('TOPLEFT',0,-y);input:Show()
-                local add=button('profile-add',parent,'Duplicate',function()command('Duplicate',input:GetText())end);add:SetPoint('TOPLEFT',232,-y);add:Show();add:SetEnabled(not caps.readOnly);y=y+36
+                local add=button('profile-add',parent,'Duplicate',function()command('Duplicate',input:GetText())end);add:SetWidth(140);add:SetPoint('TOPLEFT',232,-y);add:Show();add:SetEnabled(not caps.readOnly);y=y+36
             end
             if operations.copy then
                 local menu=dropdown('profile-copy',parent,function()local list={};for _,name in ipairs(app.profiles:List())do list[#list+1]={label=name,value=name}end;return list end,function()return self._copySource end,function(name)self._copySource=name end)
@@ -359,7 +359,7 @@ SND._install[#SND._install + 1] = function(app)
                 local copy=button('profile-copy-button',parent,'Copy into active',function()
                     if not self._copySource then command('CopyFrom',nil);return end
                     self._profileError=nil;self._confirm={kind='copy',name=self._copySource};self:Refresh()
-                end);copy:SetPoint('TOPLEFT',232,-y);copy:Show();copy:SetEnabled(not caps.readOnly);y=y+36
+                end);copy:SetWidth(140);copy:SetPoint('TOPLEFT',232,-y);copy:Show();copy:SetEnabled(not caps.readOnly);y=y+36
             end
             if operations.reset then
                 local reset=button('profile-reset',parent,'Reset active',function()self._confirm={kind='reset'};self:Refresh()end);reset:SetPoint('TOPLEFT',0,-y);reset:Show();reset:SetEnabled(not caps.readOnly);y=y+36
@@ -370,7 +370,7 @@ SND._install[#SND._install + 1] = function(app)
                     if not action then return end
                     if action.kind=='copy' then command('CopyFrom',action.name) else command('Reset') end
                 end);confirm:SetPoint('TOPLEFT',0,-y);confirm:Show()
-                local cancel=button('profile-cancel',parent,'Cancel',function()self._confirm=nil;self:Refresh()end);cancel:SetPoint('TOPLEFT',160,-y);cancel:Show();y=y+36
+                local cancel=button('profile-cancel',parent,'Cancel',function()self._confirm=nil;self:Refresh()end);cancel:SetWidth(140);cancel:SetPoint('TOPLEFT',244,-y);cancel:Show();y=y+36
             end
             local label=text('profile-status',parent,self._profileError or controls[1].text,'muted');label:SetPoint('TOPLEFT');return y
         end
