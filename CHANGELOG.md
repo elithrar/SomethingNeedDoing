@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.3
+
+### Public API changes
+
+**No public API changes.** Existing color declarations now render as labeled swatches aligned with neighboring fields, instead of action buttons in the label column.
+
+### Internal improvements
+
+- Explicitly enable mouse input for owned options controls and register left-button clicks for tabs, actions and checkboxes.
+- Report failed tab commands and exercise tab/close clicks through an input-aware fixture, including hide/reopen.
+- Keep saved color swatches in sync after acceptance, cancellation and page changes.
+
 ## 0.4.2
 
 ### Public API changes

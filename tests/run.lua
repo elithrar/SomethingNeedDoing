@@ -453,4 +453,35 @@ test('shared native control styling','native state changes preserve the palette,
     end
 end)
 
+test('mouse navigation and color field layout','buttons must accept input; swatches align with fields and follow commit/cancel across page clicks',function()
+    local a=app(basic)
+    local panel=a:Options({width=560,pages={
+        {id='appearance',label='Appearance',sections={{controls={
+            {type='color',id='color',key='color',label='Normal XP'},
+            {type='font',id='font',key='font',label='Font'},
+        }}}},
+        {id='behavior',label='Behavior',sections={{controls={{type='checkbox',key='enabled',label='Enabled'}}}}},
+        {id='tracking',label='Tracking',sections={}},
+        W.load('MouseProfiles').Pages.Profiles(),
+    }})
+    boot(a);assert(panel:Open())
+    assert(W.click(panel._pool['tab:behavior']),'tab must accept a mouse click')
+    assert(panel._page=='behavior');assert(W.click(panel._pool['tab:appearance']))
+    local color=panel._pool['appearance:1:color'];local label=panel._texts['appearance:1:color:label']
+    local font=panel._pool['appearance:1:font']
+    assert(color.points[2]==font.points[2] and label.points[2]==0)
+    assert(color._swatch.color[1]==1 and color.text:GetText()=='')
+    assert(W.click(color));W.color(.2,.4,.6,true)
+    assert(a:Get('color')[1]==.2 and color._swatch.color[1]==.2)
+    assert(W.click(color));W.color(.9,.8,.7,true,true)
+    assert(a:Get('color')[1]==.2 and color._swatch.color[1]==.2)
+    for _,id in ipairs({'behavior','tracking','profiles','appearance'})do
+        assert(W.click(panel._pool['tab:'..id]));assert(panel._page==id and panel:IsShown())
+        assert(panel._pool['tab:'..id]._selected:IsShown())
+    end
+    local count=#W.frames;assert(W.click(panel._pool.close));assert(not panel:IsShown())
+    assert(not W.click(panel._pool['tab:behavior']))
+    assert(panel:Open());assert(W.click(panel._pool['tab:behavior']));assert(#W.frames==count)
+end)
+
 print('PASS '..total..' focused tests')
