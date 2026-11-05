@@ -86,11 +86,12 @@ SND._install[#SND._install + 1] = function(app)
         end
         local function button(id,parent,label,action)
             local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(math.min(230,math.max(1,parent:GetWidth())),26);requireResource(app.ui:Style(b,'button'))
+            b:EnableMouse(true);b:RegisterForClicks('LeftButtonUp')
             b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);return b
         end
         local function input(id,parent,width)
             local edit=frame(id,'EditBox',parent,'InputBoxScriptTemplate,BackdropTemplate')
-            edit:SetSize(width,26);edit:SetAutoFocus(false);edit:SetTextInsets(8,8,0,0)
+            edit:EnableMouse(true);edit:SetSize(width,26);edit:SetAutoFocus(false);edit:SetTextInsets(8,8,0,0)
             requireResource(app.ui:Style(edit,'input'));requireResource(app.fonts:Apply(edit,'control'));requireResource(app.ui:Color(edit,'text'))
             return edit
         end
@@ -173,7 +174,7 @@ SND._install[#SND._install + 1] = function(app)
             if not ok then error(err,0)end
         end
         local function dropdown(id,parent,entries,get,set)
-            local d=frame(id,'DropdownButton',parent,'WowStyle1DropdownTemplate,BackdropTemplate');panel._menus[id]=d;d:SetSize(230,26)
+            local d=frame(id,'DropdownButton',parent,'WowStyle1DropdownTemplate,BackdropTemplate');panel._menus[id]=d;d:EnableMouse(true);d:SetSize(230,26)
             -- Keep native menu/selection behavior, but own the closed control's
             -- chrome. Forever's template artwork extends beyond its bounds.
             requireResource(app.ui:Style(d,'dropdown'))
@@ -227,7 +228,7 @@ SND._install[#SND._install + 1] = function(app)
             elseif kind=='button' then
                 widget=button(id,parent,c.label,function()I.call(app,c.action,app)end);height=34
             elseif kind=='checkbox' then
-                widget=frame(id,'CheckButton',parent,'BackdropTemplate');widget:SetSize(20,20);requireResource(app.ui:Style(widget,'checkbox'));widget:SetChecked(app:Get(c.key))
+                widget=frame(id,'CheckButton',parent,'BackdropTemplate');widget:EnableMouse(true);widget:RegisterForClicks('LeftButtonUp');widget:SetSize(20,20);requireResource(app.ui:Style(widget,'checkbox'));widget:SetChecked(app:Get(c.key))
                 label=text(id..':label',parent,c.label);label:SetWidth(width-28);widget:SetScript('OnClick',function(b)write(b:GetChecked()==true)end);height=math.max(28,label:GetStringHeight()+8)
             elseif kind=='select' or kind=='font' then
                 widget=dropdown(id,parent,kind=='font' and function()return app.fonts:Entries()end or c.choices or {},function()return app:Get(c.key)end,write)
@@ -240,16 +241,23 @@ SND._install[#SND._install + 1] = function(app)
                 label=text(id..':label',parent,c.label);height=56
             elseif kind=='slider' then
                 I.check(field and field.min and field.max,'slider requires bounds')
-                widget=frame(id,'Slider',parent,'BackdropTemplate');widget:SetSize(math.min(width,260),18);widget:SetOrientation('HORIZONTAL')
+                widget=frame(id,'Slider',parent,'BackdropTemplate');widget:EnableMouse(true);widget:SetSize(math.min(width,260),18);widget:SetOrientation('HORIZONTAL')
                 requireResource(app.ui:Style(widget,'slider'))
                 widget:SetMinMaxValues(field.min,field.max);widget:SetValueStep(c.step or 1);widget:SetObeyStepOnDrag(true);widget:SetValue(app:Get(c.key))
                 widget:SetScript('OnValueChanged',function(_,value)write(value)end)
                 local value=app:Get(c.key);local formatted=c.format=='percent' and string.format('%g%%',value*100) or type(c.format)=='function' and c.format(value) or tostring(value)
                 label=text(id..':label',parent,c.label..': '..formatted..(c.units and ' '..c.units or ''));height=56
             elseif kind=='color' then
-                widget=button(id,parent,c.label,function()color(c)end);height=34
+                widget=button(id,parent,'',function()color(c)end)
+                label=text(id..':label',parent,c.label)
+                local value=app:Get(c.key)
+                if not widget._swatch then
+                    widget._swatch=widget:CreateTexture(nil,'ARTWORK')
+                    widget._swatch:SetPoint('TOPLEFT',5,-5);widget._swatch:SetPoint('BOTTOMRIGHT',-5,5)
+                end
+                widget._swatch:SetColorTexture(value[1],value[2],value[3],1);height=34
             else I.check(false,'unknown control type') end
-            local paired=kind=='select' or kind=='font' or kind=='text' or kind=='number' or kind=='slider'
+            local paired=kind=='select' or kind=='font' or kind=='text' or kind=='number' or kind=='slider' or kind=='color'
             local inline=paired and width>=420
             if label then
                 label:SetWidth(kind=='checkbox' and width-28 or inline and width-246 or width);label:SetWordWrap(true)
@@ -286,7 +294,7 @@ SND._install[#SND._install + 1] = function(app)
             local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-30,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
-            local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:SetPoint('TOPRIGHT',-10,-90);bar:SetPoint('BOTTOMRIGHT',-10,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
+            local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-10,-90);bar:SetPoint('BOTTOMRIGHT',-10,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
             requireResource(app.ui:Style(bar,'scrollbar'));bar._thumb=bar._sndControlArt.thumb
             bar:SetScript('OnValueChanged',function(_,value)
                 if not self._refreshing and value~=(self._offsets[self._page] or 0)then self:_cancelEditors()end
@@ -294,7 +302,7 @@ SND._install[#SND._install + 1] = function(app)
             end)
             scroll:EnableMouseWheel(true);scroll:SetScript('OnMouseWheel',function(_,delta)bar:SetValue(math.max(0,math.min(self._maximum or 0,(self._offsets[self._page] or 0)-delta*30)))end)
             for i,page in ipairs(self._pages) do
-                local b=button('tab:'..page.id,f,page.label or page.id,function()self:SelectPage(page.id)end)
+                local b=button('tab:'..page.id,f,page.label or page.id,function()report(self:SelectPage(page.id))end)
                 local tabWidth=((spec.width or 640)-32-(#self._pages-1)*4)/#self._pages
                 b:SetSize(tabWidth,26);b:SetPoint('TOPLEFT',16+(i-1)*(tabWidth+4),-50)
                 if not b._selected then
@@ -401,7 +409,7 @@ SND._install[#SND._install + 1] = function(app)
                         local id=page.id..':'..si..':'..(c.id or ci)
                         if not c.visible or c.visible(app) then
                             local widget,height,caption=control(id,self.body,c,width)
-                            local paired=c.type=='select' or c.type=='font' or c.type=='text' or c.type=='number' or c.type=='slider'
+                            local paired=c.type=='select' or c.type=='font' or c.type=='text' or c.type=='number' or c.type=='slider' or c.type=='color'
                             local inline=paired and width>=420
                             if widget then
                                 widget:ClearAllPoints();widget:SetPoint('TOPLEFT',inline and width-widget:GetWidth() or 0,-y-(paired and not inline and caption:GetStringHeight()+6 or 0))

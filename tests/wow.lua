@@ -9,6 +9,9 @@ function CreateFrame(kind,name,parent,template)
     if W.failKind==kind then W.failKind=nil;error('simulated constructor failure') end
     if W.failTemplate and template and template:find(W.failTemplate,1,true) then W.failTemplate=nil;error('simulated constructor failure') end
     local f=object(kind,parent);f.template=template
+    -- BackdropTemplate supplies decoration, not an input contract. Require the
+    -- options owner to opt in, instead of dispatching OnClick unconditionally.
+    if template and template:find('BackdropTemplate',1,true) then f.mouseEnabled=false end
     if name then _G[name]=f end
     if template=='UICheckButtonTemplate' or kind=='DropdownButton' then f.Text=object('FontString',f) end
     if kind=='DropdownButton' then
@@ -16,6 +19,17 @@ function CreateFrame(kind,name,parent,template)
         f.OnButtonStateChanged=function(self) self.Text:SetTextColor(1,1,1,1)end
     end
     return f
+end
+function W.click(frame)
+    if not frame.mouseEnabled or not frame:IsEnabled() then return false end
+    local owner=frame
+    while owner do if not owner:IsShown() then return false end;owner=owner:GetParent()end
+    if frame.clickButtons then
+        local found=false;for _,event in ipairs(frame.clickButtons)do if event=='LeftButtonUp' then found=true end end
+        if not found then return false end
+    end
+    if frame.scripts.OnClick then frame.scripts.OnClick(frame,'LeftButton');return true end
+    return false
 end
 function CreateFont(name)local f=object('Font');_G[name]=f;return f end
 function methods:CreateTexture()return object('Texture',self)end
@@ -28,6 +42,8 @@ function methods:SetDisabledCheckedTexture(texture)self.disabledCheckedTexture=t
 function methods:IsEnabled()return self.enabled end
 function methods:SetCheckedTexture(texture)self.checkedTexture=texture end
 function methods:SetThumbTexture(texture)self.thumb=texture end
+function methods:RegisterForClicks(...)self.clickButtons={...}end
+function methods:EnableMouse(value)self.mouseEnabled=value end
 function methods:SetAlpha(value)self.alpha=value end
 function methods:SetOrientation(value)self.orientation=value end
 function methods:CreateFontString()return object('FontString',self)end
@@ -109,7 +125,7 @@ function methods:IsForbidden()return self.forbidden==true end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
 function methods:ClearFocus()self.focus=false end
-for _,name in ipairs({'SetTextInsets','SetFrameStrata','EnableMouse','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV'})do methods[name]=function()end end
+for _,name in ipairs({'SetTextInsets','SetFrameStrata','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)
 GameFontNormal=object('Font');GameTooltipText=object('Font')
 ColorPickerFrame=object('Frame');ColorPickerFrame:Hide()
