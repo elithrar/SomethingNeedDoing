@@ -352,6 +352,9 @@ test('generated options and settled font layout','default panels must bind valid
     -- Captions keep the selected font size and grow their row when wrapping.
     panel._pool['profile-reset'].scripts.OnClick()
     local confirm=panel._pool['profile-confirm'];local count=#W.frames
+    local close=panel._pool.close;local closeMeasure=close.text.GetStringHeight
+    close.text.GetStringHeight=function(self)return closeMeasure(self)*2 end
+    local closeHeight=close:GetHeight();assert(panel:Refresh());assert(close:GetHeight()>closeHeight)
     local beforeHeight=confirm:GetHeight()
     local measure=confirm.text.GetStringHeight
     confirm.text.GetStringHeight=function(self)return measure(self)*2 end
