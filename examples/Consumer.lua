@@ -55,6 +55,12 @@ app:OnReady(function()
     preview:SetSize(120, 40);preview:SetPoint('CENTER')
     local styled, styleError = app.ui:Style(preview,'section')
     if not styled then app.log:Warn(styleError.message) end
+    -- Custom panels can share the same chrome as generated options.
+    local toggle=CreateFrame('CheckButton',nil,preview,'BackdropTemplate')
+    toggle:SetSize(20,20);toggle:SetPoint('TOPRIGHT',-4,-4)
+    local ok,failure=app.ui:Style(toggle,'checkbox')
+    if not ok then app.log:Warn(failure.message)end
+    toggle:SetScript('OnClick',function(self)preview:SetAlpha(self:GetChecked() and .6 or 1)end)
     local label=preview:CreateFontString(nil,'OVERLAY','GameTooltipText')
     label:SetPoint('CENTER');label:SetText('Ready')
     local applied, fontError = app.fonts:Apply(label,'body')
