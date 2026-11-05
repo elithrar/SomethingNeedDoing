@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0
+
+### Public API changes
+
+Add shared `ui:Control`, `layout:Row` and `layout:Columns` APIs for generated options and custom views. Previously custom views had to select native templates, activate input and manually place every field. Now they can request a stable parent/id control and call `layout:Row(parent, {width=480, label=label, control=control})`, checking both Results. `layout:Columns` returns count/width directly. Controls retain consumer-owned values and callbacks; no persistence migration is needed.
+
+Options now accept panel/section `layout` declarations and per-control `width`; buttons accept `align`. Before, all fields used a fixed 230-unit column and sections were single-column. After, `layout={columns=2,minColumnWidth=220}` creates responsive sections, `{type="color",key="tint",label="Tint",width=36}` keeps a compact aligned swatch, and `align="stretch"` creates grouped action rows. Defaults preserve existing declarations.
+
+With calls unchanged, narrow screens now reflow the panel instead of shrinking it; long captions wrap at the selected font size and increase row height. Custom component Layout methods now reject non-finite/negative heights. These are compatible additions with presentation changes, not a saved-data or signature migration. Existing custom views may opt into the shared constructors and geometry incrementally. See API.md and the updated executable example for ownership and error handling.
+
+### Internal improvements
+
+- Use one measured row implementation for bound fields, checkbox labels, descriptions and actions; include labels in checkbox hit regions.
+- Reflow section columns and navigation at the available width while reusing frames and preserving page scroll offsets.
+- Grow profile action rows around wrapped captions and retain the native input/menu lifetimes.
+- Exercise public construction recovery, disabled state, focus release, compact controls, long captions, viewport changes and hide/reopen. Native rendering and mouse routing still require in-game checks.
+
 ## 0.4.3
 
 ### Public API changes

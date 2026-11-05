@@ -270,15 +270,57 @@ app:Slash("/example", function() options:Toggle() end)
 
 `app:Options(spec?) -> panel` returns a lazy shell. With `pages` omitted, it generates a Settings page from declared fields in sorted path order and a Profiles page. Field labels default to their paths; enums use their values as labels. Explicit pages replace this default and control order, grouping and custom components. `panel:Open(pageID)`, `Close()`, `Toggle()`, `SelectPage(pageID)`, `Refresh()`, and `IsShown()` are the initial methods. Mutating methods return `boolean, error`. One options shell per app. The named shell registers for native Escape dismissal; hiding it cancels its editors, confirmations and view scope. Disposal removes only its own `UISpecialFrames` entry.
 
-Pages have stable IDs and retain their own scroll offsets. Sections flow vertically with measured labels; omit `section.title` to avoid a heading row. With at least 420 local units of content width, select/font/input/slider fields align beside their labels; narrower declarations stack them. The active tab has an accent underline. There is no general CSS/grid engine in v0. The header, tabs, and close control remain accessible while the body scrolls on short screens. Narrow screens scale the shell as needed. Construction is retryable and reuses existing frame/text objects; a failed build is never published as a usable panel.
+Pages have stable IDs and retain their own scroll offsets. Sections flow with measured labels; omit `section.title` to avoid a heading row. Fields align beside labels when the configured columns fit and stack otherwise. The active tab has an accent underline. On narrow screens, the shell reduces its logical width and reflows fields, sections and tabs; scaling is a fallback only when the minimum shell width or wrapped navigation plus a usable body cannot fit. The header, tabs, and close control stay outside the scrolling body. Construction is retryable and reuses existing frame/text objects; a failed build is never published as a usable panel.
 
 Color controls display the setting label and its saved RGB swatch in the same field column as other inputs (stacked in narrow panels). Clicking the swatch opens the native picker; previews remain transient.
 
 Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `color`, `button`, and `description`. Bound controls declare `key`; labels, hints, units, menu choices (`choices = { { label = ..., value = ... } }`), and button `action(app)` callbacks come from the consumer. Numeric bounds come from the field schema; display formatting never changes stored units. `enabled(app)` and `visible(app)` are pure predicates. Reset/copy confirmation is supplied by the profile page, not by silently changing model semantics. You may assign ordinary `sections` to the table returned by `SND.Pages.Profiles()`; these render below its built-in commands. Existing declarations need no migration.
 
-Custom escape hatch: `{ type = "custom", id = "preview", create = function(parent, app, scope) ... end }`. The factory returns a component with `Refresh()`, `Layout(width) -> height`, and `Hide()` methods. Its supplied parent is a pooled container positioned in the section; it creates children only under that container and owns callbacks through its supplied scope. Failed construction must be retry-safe; named components are reused, not rebuilt on every refresh.
+Custom escape hatch: `{ type = "custom", id = "preview", create = function(parent, app, scope) ... end }`. The factory returns a component with `Refresh()`, `Layout(width) -> height`, and `Hide()` methods. Height must be finite and nonnegative. Its supplied parent is a pooled container positioned in the section; it creates children only under that container and owns callbacks through its supplied scope. Failed construction must be retry-safe; named components are reused, not rebuilt on every refresh.
 
 Open menus are not regenerated underneath input. Selection/font changes queue menu regeneration until release. Page switches, hiding, and geometry changes close only owned menus, release edit focus, and cancel owned transient editors. Hiding options does not stop unrelated gameplay work.
+
+### Form layout and custom controls
+
+`spec.layout` sets form defaults; `section.layout` overrides individual values. These are plain copied declarations:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `fieldWidth` | 230 | Width reserved for the aligned input column. |
+| `minLabelWidth` | 174 | Minimum label column width before a field stacks. |
+| `gap` | 16 | Space between label and input columns. |
+| `rowGap` | 8 | Space after each measured row, including any hint. |
+| `columns` | 1 | Maximum section columns, integer 1–4. |
+| `minColumnWidth` | 220 | Minimum column width before collapsing to fewer columns. |
+| `columnGap` | 16 | Space between section columns. |
+
+Dimensions must be finite and positive; gaps may be zero. Unknown layout options raise at declaration. Sections fill across each row, using its tallest control, then continue downward. Hidden controls consume no cell. Titles span the section. A single column can be narrower than `minColumnWidth` on a small viewport.
+
+An input's optional `width` makes it compact within the reserved field column. For example, `{type="color", key="tint", label="Tint", width=36}` keeps a small swatch aligned with neighboring inputs. Buttons accept `width` and `align="start"` (default), `"field"`, or `"stretch"`. A two-column section of stretched buttons forms an action group that stacks when necessary. Checkbox labels are included in their measured hit area. Wrapped labels, hints and action captions contribute to row height; text is never shrunk to fit a row.
+
+Custom views use the same tools without adopting SND settings:
+
+```lua
+local ok, input = app.ui:Control(parent, "count", "input")
+if not ok then error(input.message) end
+input:SetHeight(26)
+local label = parent:CreateFontString(nil, "OVERLAY", "GameTooltipText")
+label:SetText("Count")
+local applied, failure = app.fonts:Apply(label, "control")
+if not applied then error(failure.message) end
+local placed, height = app.layout:Row(parent, {
+    width = 480, label = label, control = input, controlWidth = 72,
+    layout = {fieldWidth=220, minLabelWidth=160},
+})
+if not placed then error(height.message) end
+-- Place the next row at y=height. Values and callbacks remain yours.
+```
+
+- `ui:Control(parent, id, kind) -> ok, frameOrError`: kinds are `button`, `checkbox`, `input`, `dropdown`, and `slider`. The same parent/id returns the same frame; changing its kind raises. SND supplies the required native template, theme, mouse activation, left-button registration for buttons/checkboxes, disabled opacity, and input focus release on hide. Partial construction is retryable. Reuse preserves values and caller scripts. Callers own labels, fonts, dimensions, slider orientation, menus, bindings and commit/cancel behavior. Input autofocus is disabled. After disposal, construction returns `unavailable`.
+- `layout:Row(parent, spec) -> ok, heightOrError`: one-shot placement with no allocation or subscriptions. Required `width` and optional `x=0`, `y=0` are parent-local units; positive y runs downward from TOPLEFT. `kind` is `field` (default), `check`, `action`, or `text`. Supply `control`, `label`, optional `hint`, `layout`, `controlWidth`, and action `align` as appropriate. Fields require a label; text rows require only a label. Controls and hints must be children of parent; labels also belong to parent except action captions, which belong to their control. Use unscaled controls; the row resets text scale to 1 and measures its applied font. Field/check control heights come from the caller; actions grow to fit their caption. The result includes `rowGap`. It does not show/hide frames, change values or attach bindings. Native failure returns `unavailable`; retry after recovery (partial geometry is not rolled back).
+- `layout:Columns(width, layout?) -> count, columnWidth`: pure calculation using the same column rules. Use `columnGap` between columns and the maximum row height before advancing y. Invalid declarations raise; this calculation does not return a Result tuple.
+
+Custom views should relayout after width/content changes and after their scoped `SelectAppearance` notification, when fonts have settled. These helpers do not install a second refresh loop or persistence owner.
 
 ## 6. UI, typography, and screen geometry
 

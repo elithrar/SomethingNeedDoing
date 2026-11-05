@@ -42,6 +42,7 @@ function methods:SetDisabledCheckedTexture(texture)self.disabledCheckedTexture=t
 function methods:IsEnabled()return self.enabled end
 function methods:SetCheckedTexture(texture)self.checkedTexture=texture end
 function methods:SetThumbTexture(texture)self.thumb=texture end
+function methods:SetHitRectInsets(...)self.hitInsets={...}end
 function methods:RegisterForClicks(...)self.clickButtons={...}end
 function methods:EnableMouse(value)self.mouseEnabled=value end
 function methods:SetAlpha(value)self.alpha=value end
@@ -124,6 +125,7 @@ function methods:IsProtected()return self.protected==true end
 function methods:IsForbidden()return self.forbidden==true end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
+function methods:SetFocus()self.focus=true end
 function methods:ClearFocus()self.focus=false end
 for _,name in ipairs({'SetTextInsets','SetFrameStrata','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)

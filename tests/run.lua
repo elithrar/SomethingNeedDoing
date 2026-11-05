@@ -349,21 +349,19 @@ test('generated options and settled font layout','default panels must bind valid
     panel._confirm={kind='reset'};panel._pool['profile-copy-button'].scripts.OnClick();assert(not panel._confirm and panel._texts['profile-status']:GetText()=='Choose a profile.')
     assert(not pcall(function()a.profiles:Duplicate('')end));assert(not pcall(function()a.profiles:CopyFrom(nil)end))
     panel._pool['profile-name']:SetText('Other');panel._pool['profile-add'].scripts.OnClick();assert(a.profiles:Active()=='Other' and not panel._profileError)
-    -- Full captions fit fixed geometry after native font metrics change. This
-    -- includes shell tabs/close and paired confirmation buttons, not just rows.
+    -- Captions keep the selected font size and grow their row when wrapping.
     panel._pool['profile-reset'].scripts.OnClick()
     local confirm=panel._pool['profile-confirm'];local count=#W.frames
-    for _,button in pairs(panel._buttons)do
-        button.text.GetUnboundedStringWidth=function(self)return #self:GetText()*15 end
-    end
-    assert(a:Set('theme','modern'))
+    local close=panel._pool.close;local closeMeasure=close.text.GetStringHeight
+    close.text.GetStringHeight=function(self)return closeMeasure(self)*2 end
+    local closeHeight=close:GetHeight();assert(panel:Refresh());assert(close:GetHeight()>closeHeight)
+    local beforeHeight=confirm:GetHeight()
+    local measure=confirm.text.GetStringHeight
+    confirm.text.GetStringHeight=function(self)return measure(self)*2 end
     panel._pool['profile-reset'].scripts.OnClick()
-    for _,button in pairs(panel._buttons)do
-        local label=button.text;assert(label.scale>0 and label.scale<=1)
-        assert(label:GetUnboundedStringWidth()*label.scale<=button:GetWidth()-12+.001)
-        assert(label:GetWidth()*label.scale<=button:GetWidth()-12+.001)
-        assert(label:GetHeight()*label.scale<=button:GetHeight()-6+.001)
-    end
+    assert(confirm.text.scale==1 and confirm:GetHeight()>beforeHeight)
+    local cancel=panel._pool['profile-cancel']
+    assert(cancel.points[3]==confirm.points[3],'paired actions start on the same row')
     assert(confirm.text:GetText()=='Confirm replacement' and #W.frames==count)
     local click=confirm.scripts.OnClick;panel:Close();click();assert(a.profiles:Active()=='Other')
     assert(panel:Open('profiles'))
@@ -482,6 +480,85 @@ test('mouse navigation and color field layout','buttons must accept input; swatc
     local count=#W.frames;assert(W.click(panel._pool.close));assert(not panel:IsShown())
     assert(not W.click(panel._pool['tab:behavior']))
     assert(panel:Open());assert(W.click(panel._pool['tab:behavior']));assert(#W.frames==count)
+end)
+
+-- Reuse the exact layout path used by generated options in a custom view. These
+-- contracts protect native-failure retry, width reflow and readable captions.
+-- Native methods verified in Forever 1.60.1.70338 at
+-- 943764493e6b16d63ded3ab304150d1f05e58b57: SimpleFrame SetHitRectInsets,
+-- SimpleScriptRegion EnableMouse, SimpleButton RegisterForClicks, and
+-- SimpleButton/SimpleEditBox/SimpleSlider SetEnabled + IsEnabled. Native
+-- hit routing itself still requires an in-client check.
+test('public form layout and controls','custom views share measured rows and input setup without owning another settings store',function()
+    local a=app();boot(a)
+    local parent=CreateFrame('Frame',nil,UIParent);parent:SetSize(500,400)
+    local original=CreateFrame;local first
+    CreateFrame=function(...)
+        local f=original(...);first=f
+        f.EnableMouse=function()error('input unavailable')end
+        return f
+    end
+    assert(not a.ui:Control(parent,'action','button'));CreateFrame=original
+    first.EnableMouse=nil;local count=#W.frames
+    local ok,button=a.ui:Control(parent,'action','button');assert(ok and button==first and #W.frames==count)
+    local clicks=0;button:SetScript('OnClick',function()clicks=clicks+1 end);assert(W.click(button) and clicks==1)
+    assert(a.ui:Control(parent,'action','button'));assert(W.click(button) and clicks==2)
+    button:SetEnabled(false);assert(button.alpha==.45 and not W.click(button));button:SetEnabled(true);assert(button.alpha==1)
+    assert(not pcall(function()a.ui:Control(parent,'action','checkbox')end))
+    local label=parent:CreateFontString();label:SetText('Normal XP')
+    button:SetHeight(26)
+    local placed,height=a.layout:Row(parent,{width=500,label=label,control=button,controlWidth=36})
+    assert(placed and button:GetWidth()==36 and button.points[2]==270 and label.points[2]==0)
+    assert(a.layout:Row(parent,{width=250,label=label,control=button,controlWidth=36}))
+    assert(button.points[2]==0 and button.points[3]<label.points[3],'narrow field stacks at readable font size')
+    local actionLabel=button:CreateFontString();actionLabel:SetText(string.rep('Long caption ',10))
+    assert(a.layout:Row(parent,{width=160,kind='action',control=button,label=actionLabel,align='stretch'}))
+    assert(actionLabel.scale==1 and button:GetHeight()>26)
+    local _,check=a.ui:Control(parent,'check','checkbox');check:SetSize(20,20)
+    assert(a.layout:Row(parent,{width=250,kind='check',control=check,label=label}))
+    assert(check.hitInsets[2]==-230,'label is included in the native hit rectangle')
+    local _,edit=a.ui:Control(parent,'edit','input');edit:SetFocus();edit:Hide();assert(not edit.focus)
+    local columns,cw=a.layout:Columns(500,{columns=2,minColumnWidth=220});assert(columns==2 and cw==242)
+    columns,cw=a.layout:Columns(300,{columns=2,minColumnWidth=220});assert(columns==1 and cw==300)
+    assert(not pcall(function()a.layout:Columns(300,{columns=1.5})end))
+    assert(not pcall(function()a.layout:Row(parent,{width=0})end))
+    local setPoint=button.SetPoint;button.SetPoint=function()error('native placement failure')end
+    assert(not a.layout:Row(parent,{width=500,label=label,control=button}))
+    button.SetPoint=setPoint;assert(a.layout:Row(parent,{width=500,label=label,control=button}))
+    W.event('PLAYER_LOGOUT');assert(not a.ui:Control(parent,'new','button'))
+end)
+
+test('responsive options sections','screen changes collapse fields, columns and navigation without losing controls or font size',function()
+    local a=app(basic)
+    local panel=a:Options({width=560,pages={
+        {id='form',label='Appearance',sections={
+            {controls={{type='font',id='font',key='font',label='Font'},{type='color',key='color',label='Tint',width=36}}},
+            {layout={columns=2,minColumnWidth=220},controls={
+                {type='button',id='one',label='First action',align='stretch',visible=function(app)return app:Get('enabled')end,action=function()end},
+                {type='button',id='two',label='Second action',align='stretch',action=function()end},
+            }},
+        }},
+        {id='behavior',label='Behavior'},{id='tracking',label='Tracking'},{id='profiles',label='Profiles'},
+    }})
+    boot(a);assert(panel:Open())
+    local one,two=panel._pool['form:2:one'],panel._pool['form:2:two']
+    assert(one.points[3]==two.points[3] and two.points[2]>one.points[2])
+    assert(a:Set('enabled',false));assert(not one:IsShown() and two.points[2]==0,'hidden cells leave no gap')
+    assert(a:Set('enabled',true));assert(one:IsShown() and two.points[2]>0)
+    local count=#W.frames;local old=UIParent:GetWidth();UIParent:SetWidth(360);W.event('DISPLAY_SIZE_CHANGED')
+    assert(panel.frame:GetWidth()==344 and panel.frame.scale==1)
+    assert(panel._pool['form:1:font'].points[2]==0)
+    assert(two.points[2]==0 and two.points[3]<one.points[3])
+    assert(panel._pool['tab:tracking'].points[3]<panel._pool['tab:form'].points[3])
+    for _,b in pairs(panel._buttons)do assert(b.text.scale==1)end
+    assert(W.click(panel._pool['tab:behavior']) and panel._page=='behavior')
+    assert(W.click(panel._pool['tab:form']));UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED')
+    assert(one.points[3]==two.points[3] and #W.frames==count)
+    panel:Close();assert(panel:Open());assert(#W.frames==count)
+    local oldHeight=UIParent:GetHeight();UIParent:SetSize(200,180);W.event('DISPLAY_SIZE_CHANGED')
+    assert(panel.frame:GetHeight()*panel.frame.scale<=164.001,'wrapped header and viewport fit short screens')
+    assert(panel.frame:GetHeight()>=200,'wrapped header reserves a usable body')
+    UIParent:SetSize(old,oldHeight);W.event('DISPLAY_SIZE_CHANGED')
 end)
 
 print('PASS '..total..' focused tests')

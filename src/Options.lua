@@ -19,6 +19,7 @@ SND._install[#SND._install + 1] = function(app)
         end
         I.array(spec.pages, 'pages', true)
         I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
+        spec.layout=I.formLayout(spec.layout)
         local pageIDs={}
         local function choices(entries)
             I.array(entries,'choices')
@@ -30,6 +31,7 @@ SND._install[#SND._install + 1] = function(app)
             I.array(page.sections==nil and {} or page.sections, 'sections')
             for _,section in ipairs(page.sections or {})do
                 I.check(I.plain(section),'section must be a plain table')
+                section.layout=I.formLayout(section.layout,spec.layout)
                 I.array(section.controls==nil and {} or section.controls,'controls')
                 local controlIDs={}
                 for index,c in ipairs(section.controls or {})do
@@ -47,6 +49,8 @@ SND._install[#SND._install + 1] = function(app)
                         I.check(expected and field.type==expected or (not expected and (field.type=='number' or field.type=='integer')), 'control type does not match field')
                         if c.type=='slider' then I.check(field.min~=nil and field.max~=nil, 'slider requires bounds')end
                     end
+                    I.check(c.width==nil or (SND.Values.Number(c.width) and c.width>0),'control width must be positive')
+                    I.check(c.align==nil or (c.type=='button' and (c.align=='start' or c.align=='field' or c.align=='stretch')),'invalid control alignment')
                     I.check(c.step==nil or (SND.Values.Number(c.step) and c.step>0), 'control step must be positive')
                     I.check(c.format==nil or c.format=='percent' or type(c.format)=='function', 'invalid control formatter')
                     if c.choices~=nil and type(c.choices)~='function' then choices(c.choices)end
@@ -62,7 +66,7 @@ SND._install[#SND._install + 1] = function(app)
             if not panel._pool[id] then panel._pool[id]=CreateFrame(kind,nil,parent,template) end
             return panel._pool[id]
         end
-        local function requireResource(ok,err)I.check(ok,err and err.message or 'UI resource unavailable')end
+        local function requireResource(ok,err)I.check(ok,type(err)=='table' and err.message or 'UI resource unavailable')end
         local function text(id,parent,value,role)
             if panel._usedText then panel._usedText[id]=true end
             local label=panel._texts[id]
@@ -72,27 +76,23 @@ SND._install[#SND._install + 1] = function(app)
         local function fitButton(button)
             local label=button.text
             requireResource(app.fonts:Apply(label,'control'));requireResource(app.ui:Color(label,'text'))
-            -- Keep the full caption inside its allocation, including narrow tabs
-            -- and close buttons. Reset scale before measuring a changed font.
-            label:SetScale(1);label:SetWordWrap(false);label:SetWidth(0);label:SetHeight(0)
-            local width=label.GetUnboundedStringWidth and label:GetUnboundedStringWidth() or label:GetStringWidth()
-            label:SetWidth(math.max(1,width))
-            local height=label:GetStringHeight();local effective=label:GetEffectiveScale()
-            width=(math.ceil(width*effective)+2)/effective;height=(math.ceil(height*effective)+2)/effective
-            local availableWidth,availableHeight=math.max(1,button:GetWidth()-12),math.max(1,button:GetHeight()-6)
-            local scale=math.min(1,availableWidth/math.max(1,width),availableHeight/math.max(1,height))
-            label:SetScale(scale);label:SetSize(availableWidth/scale,availableHeight/scale)
-            label:ClearAllPoints();label:SetPoint('CENTER');label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE')
+            label:SetScale(1);label:SetWordWrap(true);label:SetWidth(math.max(1,button:GetWidth()-16));label:SetHeight(0)
+            local height=math.max(26,label:GetStringHeight()+10);button:SetHeight(height)
+            label:ClearAllPoints();label:SetPoint('CENTER');label:SetHeight(height-10);label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE')
+        end
+        local function ownedControl(id,parent,kind)
+            local ok,result=app.ui:Control(parent,id,kind);requireResource(ok,result)
+            if panel._used then panel._used[id]=true end
+            panel._pool[id]=result;return result
         end
         local function button(id,parent,label,action)
-            local b=frame(id,'Button',parent,'BackdropTemplate');b:SetSize(math.min(230,math.max(1,parent:GetWidth())),26);requireResource(app.ui:Style(b,'button'))
-            b:EnableMouse(true);b:RegisterForClicks('LeftButtonUp')
-            b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);return b
+            local b=ownedControl(id,parent,'button');b:SetSize(math.min(230,math.max(1,parent:GetWidth())),26)
+            b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);fitButton(b);return b
         end
         local function input(id,parent,width)
-            local edit=frame(id,'EditBox',parent,'InputBoxScriptTemplate,BackdropTemplate')
-            edit:EnableMouse(true);edit:SetSize(width,26);edit:SetAutoFocus(false);edit:SetTextInsets(8,8,0,0)
-            requireResource(app.ui:Style(edit,'input'));requireResource(app.fonts:Apply(edit,'control'));requireResource(app.ui:Color(edit,'text'))
+            local edit=ownedControl(id,parent,'input')
+            edit:SetSize(width,26)
+            requireResource(app.fonts:Apply(edit,'control'));requireResource(app.ui:Color(edit,'text'))
             return edit
         end
         local function report(ok,err) if not ok then app.log:Warn('Options action failed',{code=err and err.code or 'unknown'}) end end
@@ -174,10 +174,9 @@ SND._install[#SND._install + 1] = function(app)
             if not ok then error(err,0)end
         end
         local function dropdown(id,parent,entries,get,set)
-            local d=frame(id,'DropdownButton',parent,'WowStyle1DropdownTemplate,BackdropTemplate');panel._menus[id]=d;d:EnableMouse(true);d:SetSize(230,26)
+            local d=ownedControl(id,parent,'dropdown');panel._menus[id]=d;d:SetSize(230,26)
             -- Keep native menu/selection behavior, but own the closed control's
             -- chrome. Forever's template artwork extends beyond its bounds.
-            requireResource(app.ui:Style(d,'dropdown'))
             if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu')end
             requireResource(app.fonts:Apply(panel._menuFont,'menu'))
             d:SetupMenu(function(_,root)
@@ -214,7 +213,7 @@ SND._install[#SND._install + 1] = function(app)
             d:SetDefaultText(label);caption(d,label);return d
         end
         local function control(id,parent,c,width)
-            local kind=c.type;local widget,label,height
+            local kind=c.type;local widget,label
             local field=c.key and app._settingsFields and app._settingsFields[c.key]
             if c.key then I.check(field,'control binds unknown field: '..c.key) end
             local function write(value) if not panel._refreshing then report(app:Set(c.key,value)) end end
@@ -222,31 +221,30 @@ SND._install[#SND._install + 1] = function(app)
                 local container=frame(id,'Frame',parent);container:SetWidth(width);container:Show()
                 local component=panel._components[id]
                 if not component then component=c.create(container,app,panel._view);I.check(component and component.Refresh and component.Layout and component.Hide,'invalid custom component');panel._components[id]=component end
-                component:Refresh();local height=component:Layout(width);container:SetHeight(height);return container,height,component
+                component:Refresh();local height=component:Layout(width);I.check(SND.Values.Number(height) and height>=0,'custom layout must return a finite nonnegative height');container:SetHeight(height);return container,height,component
             elseif kind=='description' then
-                label=text(id,parent,c.text or c.label,'muted');label:SetWidth(width);label:SetWordWrap(true);height=math.max(22,label:GetStringHeight()+8)
+                label=text(id,parent,c.text or c.label,'muted')
             elseif kind=='button' then
-                widget=button(id,parent,c.label,function()I.call(app,c.action,app)end);height=34
+                widget=button(id,parent,c.label,function()I.call(app,c.action,app)end)
             elseif kind=='checkbox' then
-                widget=frame(id,'CheckButton',parent,'BackdropTemplate');widget:EnableMouse(true);widget:RegisterForClicks('LeftButtonUp');widget:SetSize(20,20);requireResource(app.ui:Style(widget,'checkbox'));widget:SetChecked(app:Get(c.key))
-                label=text(id..':label',parent,c.label);label:SetWidth(width-28);widget:SetScript('OnClick',function(b)write(b:GetChecked()==true)end);height=math.max(28,label:GetStringHeight()+8)
+                widget=ownedControl(id,parent,'checkbox');widget:SetSize(20,20);widget:SetChecked(app:Get(c.key))
+                label=text(id..':label',parent,c.label);label:SetWidth(width-28);widget:SetScript('OnClick',function(b)write(b:GetChecked()==true)end)
             elseif kind=='select' or kind=='font' then
                 widget=dropdown(id,parent,kind=='font' and function()return app.fonts:Entries()end or c.choices or {},function()return app:Get(c.key)end,write)
-                label=text(id..':label',parent,c.label);height=56
+                label=text(id..':label',parent,c.label)
             elseif kind=='text' or kind=='number' then
                 widget=input(id,parent,math.min(width,230))
                 widget:SetText(tostring(app:Get(c.key)));requireResource(app.fonts:Apply(widget,'control'))
                 widget:SetScript('OnEnterPressed',function(e)write(kind=='number' and tonumber(e:GetText()) or e:GetText());e:ClearFocus();panel:Refresh()end)
                 widget:SetScript('OnEscapePressed',function(e)e:ClearFocus();panel:Refresh()end)
-                label=text(id..':label',parent,c.label);height=56
+                label=text(id..':label',parent,c.label)
             elseif kind=='slider' then
                 I.check(field and field.min and field.max,'slider requires bounds')
-                widget=frame(id,'Slider',parent,'BackdropTemplate');widget:EnableMouse(true);widget:SetSize(math.min(width,260),18);widget:SetOrientation('HORIZONTAL')
-                requireResource(app.ui:Style(widget,'slider'))
+                widget=ownedControl(id,parent,'slider');widget:SetSize(math.min(width,260),18);widget:SetOrientation('HORIZONTAL')
                 widget:SetMinMaxValues(field.min,field.max);widget:SetValueStep(c.step or 1);widget:SetObeyStepOnDrag(true);widget:SetValue(app:Get(c.key))
                 widget:SetScript('OnValueChanged',function(_,value)write(value)end)
                 local value=app:Get(c.key);local formatted=c.format=='percent' and string.format('%g%%',value*100) or type(c.format)=='function' and c.format(value) or tostring(value)
-                label=text(id..':label',parent,c.label..': '..formatted..(c.units and ' '..c.units or ''));height=56
+                label=text(id..':label',parent,c.label..': '..formatted..(c.units and ' '..c.units or ''))
             elseif kind=='color' then
                 widget=button(id,parent,'',function()color(c)end)
                 label=text(id..':label',parent,c.label)
@@ -255,22 +253,9 @@ SND._install[#SND._install + 1] = function(app)
                     widget._swatch=widget:CreateTexture(nil,'ARTWORK')
                     widget._swatch:SetPoint('TOPLEFT',5,-5);widget._swatch:SetPoint('BOTTOMRIGHT',-5,5)
                 end
-                widget._swatch:SetColorTexture(value[1],value[2],value[3],1);height=34
+                widget._swatch:SetColorTexture(value[1],value[2],value[3],1)
             else I.check(false,'unknown control type') end
-            local paired=kind=='select' or kind=='font' or kind=='text' or kind=='number' or kind=='slider' or kind=='color'
-            local inline=paired and width>=420
-            if label then
-                label:SetWidth(kind=='checkbox' and width-28 or inline and width-246 or width);label:SetWordWrap(true)
-                if paired then
-                    widget:SetWidth(math.min(230,width))
-                    if kind=='select' or kind=='font' then caption(widget,widget._fullCaption) end
-                    height=inline and math.max(34,label:GetStringHeight()+10) or math.max(56,label:GetStringHeight()+34)
-                end
-            end
-            if c.hint then
-                local hint=text(id..':hint',parent,c.hint,'muted');hint:SetWidth(width)
-                height=height+hint:GetStringHeight()+6
-            end
+            if c.hint then text(id..':hint',parent,c.hint,'muted')end
             if widget then
                 local allowed=not app.profiles:Capabilities().readOnly or not c.key
                 if c.enabled then allowed=allowed and c.enabled(app) end
@@ -278,7 +263,7 @@ SND._install[#SND._install + 1] = function(app)
                 if widget.Text then requireResource(app.ui:Color(widget.Text,'text')) end
                 if label then requireResource(app.ui:Color(label,allowed and 'text' or 'muted')) end
             end
-            return widget,height,label
+            return widget,nil,label
         end
         function panel:_build()
             local name=app.name..'_SND_Options'
@@ -292,7 +277,7 @@ SND._install[#SND._install + 1] = function(app)
             f:SetScript('OnHide',function()self:_deactivate()end);requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading');title:SetPoint('TOPLEFT',16,-16)
             local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
-            local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-30,16)
+            local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-44,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
             local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-10,-90);bar:SetPoint('BOTTOMRIGHT',-10,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
             requireResource(app.ui:Style(bar,'scrollbar'));bar._thumb=bar._sndControlArt.thumb
@@ -329,6 +314,7 @@ SND._install[#SND._install + 1] = function(app)
             status:ClearAllPoints();status:SetPoint('TOPLEFT');status:SetWidth(width);status:SetWordWrap(true)
             local y=status:GetStringHeight()+16
             local function place(widget,x)
+                if widget.text and type(widget.text.SetText)=='function' then fitButton(widget)end
                 widget:ClearAllPoints();widget:SetPoint('TOPLEFT',x or 0,-y);widget:Show()
                 widget:SetEnabled(not caps.readOnly);widget:SetAlpha(caps.readOnly and .45 or 1)
             end
@@ -340,9 +326,9 @@ SND._install[#SND._install + 1] = function(app)
                 if width>=384 then
                     second:SetWidth(140);place(second,244)
                 else
-                    y=y+34;second:SetWidth(math.min(230,width));place(second)
+                    y=y+first:GetHeight()+8;second:SetWidth(math.min(230,width));place(second)
                 end
-                y=y+36
+                y=y+math.max(width>=384 and first:GetHeight() or 0,second:GetHeight())+10
             end
             local function command(method,name)
                 self._confirm=nil
@@ -373,7 +359,7 @@ SND._install[#SND._install + 1] = function(app)
                 end);pair(menu,copy)
             end
             if operations.reset then
-                local reset=button('profile-reset',parent,'Reset active',function()self._confirm={kind='reset'};self:Refresh()end);place(reset);y=y+36
+                local reset=button('profile-reset',parent,'Reset active',function()self._confirm={kind='reset'};self:Refresh()end);place(reset);y=y+reset:GetHeight()+10
             end
             if self._confirm then
                 local confirm=button('profile-confirm',parent,'Confirm replacement',function()
@@ -394,9 +380,37 @@ SND._install[#SND._install + 1] = function(app)
             self._refreshAgain=nil
             local ok,err=pcall(function()
                 self._refreshing=true
-                local scale=math.max(.1,math.min(1,(UIParent:GetWidth()-16)/(spec.width or 640)));self.frame:SetScale(scale)
+                local frameWidth=math.max(160,math.min(spec.width or 640,UIParent:GetWidth()-16))
+                local scale=math.min(1,math.max(.1,(UIParent:GetWidth()-16)/frameWidth))
+                self.frame:SetScale(scale);self.frame:SetWidth(frameWidth)
                 self.frame:SetHeight(math.max(140,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
-                local width=(spec.width or 640)-60;self.body:SetWidth(width)
+                fitButton(self._pool.close)
+                local title=self._texts.title;title:SetWidth(frameWidth-76);title:SetHeight(0);title:SetWordWrap(true)
+                local tabY=math.max(50,title:GetStringHeight()+28)
+                local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.min(4,#self._pages),minColumnWidth=110,columnGap=4})
+                local rowHeight=0
+                for index,p in ipairs(self._pages)do
+                    local b=self._pool['tab:'..p.id];b:SetWidth(tabWidth);fitButton(b)
+                    rowHeight=math.max(rowHeight,b:GetHeight())
+                    if index%count==0 or index==#self._pages then
+                        local first=index-((index-1)%count)
+                        for j=first,index do
+                            local tab=self._pool['tab:'..self._pages[j].id];tab:SetHeight(rowHeight)
+                            tab:ClearAllPoints();tab:SetPoint('TOPLEFT',16+(j-first)*(tabWidth+4),-tabY)
+                        end
+                        tabY=tabY+rowHeight+4;rowHeight=0
+                    end
+                end
+                local bodyTop=tabY+10
+                -- Reserve a usable body even when wrapped navigation is taller
+                -- than the requested shell. Scale only if that minimum cannot fit.
+                local minimumHeight=bodyTop+64
+                scale=math.min(scale,math.max(.1,(UIParent:GetHeight()-16)/minimumHeight))
+                self.frame:SetScale(scale)
+                self.frame:SetHeight(math.max(minimumHeight,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
+                self.scroll:ClearAllPoints();self.scroll:SetPoint('TOPLEFT',16,-bodyTop);self.scroll:SetPoint('BOTTOMRIGHT',-44,16)
+                self.bar:ClearAllPoints();self.bar:SetPoint('TOPRIGHT',-10,-bodyTop);self.bar:SetPoint('BOTTOMRIGHT',-10,16)
+                local width=frameWidth-60;self.body:SetWidth(width)
                 self._used,self._usedText={},{}
                 local page;for _,p in ipairs(self._pages)do if p.id==self._page then page=p end end
                 local y=0
@@ -405,28 +419,33 @@ SND._install[#SND._install + 1] = function(app)
                     if section.title then
                         local label=text(page.id..':section:'..si,self.body,section.title,'heading');label:ClearAllPoints();label:SetWidth(width);label:SetWordWrap(true);label:SetPoint('TOPLEFT',0,-y);y=y+label:GetStringHeight()+10
                     end
+                    local columns,columnWidth=app.layout:Columns(width,section.layout)
+                    local column,rowHeight=0,0
                     for ci,c in ipairs(section.controls or {}) do
                         local id=page.id..':'..si..':'..(c.id or ci)
                         if not c.visible or c.visible(app) then
-                            local widget,height,caption=control(id,self.body,c,width)
-                            local paired=c.type=='select' or c.type=='font' or c.type=='text' or c.type=='number' or c.type=='slider' or c.type=='color'
-                            local inline=paired and width>=420
-                            if widget then
-                                widget:ClearAllPoints();widget:SetPoint('TOPLEFT',inline and width-widget:GetWidth() or 0,-y-(paired and not inline and caption:GetStringHeight()+6 or 0))
+                            local widget,height,label=control(id,self.body,c,columnWidth)
+                            local x=column*(columnWidth+section.layout.columnGap)
+                            if c.type=='custom' then
+                                widget:ClearAllPoints();widget:SetPoint('TOPLEFT',x,-y)
+                            else
+                                local kind=c.type=='checkbox' and 'check' or c.type=='button' and 'action' or c.type=='description' and 'text' or 'field'
+                                local ok,result=app.layout:Row(self.body,{width=columnWidth,x=x,y=y,kind=kind,
+                                    label=kind=='action' and widget.text or label,control=widget,hint=self._texts[id..':hint'],
+                                    layout=section.layout,controlWidth=c.width,align=c.align})
+                                requireResource(ok,result);height=result
+                                if c.type=='select' or c.type=='font' then caption(widget,widget._fullCaption)end
                             end
-                            if caption and caption.SetPoint then
-                                caption:ClearAllPoints();caption:SetPoint('TOPLEFT',c.type=='checkbox' and 28 or 0,-y-(inline and math.max(0,(widget:GetHeight()-caption:GetStringHeight())/2) or 0))
-                            end
-                            if c.hint then local hint=self._texts[id..':hint'];hint:ClearAllPoints();hint:SetPoint('TOPLEFT',0,-y-height+hint:GetStringHeight()+6)end
-                            y=y+height
+                            rowHeight=math.max(rowHeight,height);column=column+1
+                            if column==columns then y=y+rowHeight;column,rowHeight=0,0 end
                         elseif self._components[id] then self._components[id]:Hide() end
                     end
+                    y=y+rowHeight
                     y=y+12
                 end
                 for id,widget in pairs(self._pool)do if widget:GetParent()==self.body and not self._used[id] then widget:Hide()end end
                 for id,label in pairs(self._texts)do if label:GetParent()==self.body and not self._usedText[id] then label:Hide()end end
                 self._used,self._usedText=nil,nil
-                for _,b in pairs(self._buttons)do fitButton(b)end
                 for _,p in ipairs(self._pages)do
                     local b=self._pool['tab:'..p.id];b._selected:SetShown(p.id==self._page)
                     requireResource(app.ui:Color(b.text,p.id==self._page and 'accent' or 'muted'))
