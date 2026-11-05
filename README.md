@@ -128,6 +128,8 @@ if not ok then app.log:Warn(err.message) end
 view:Cancel()
 ```
 
+Options align fields beside labels when space permits and mark the selected tab. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
+
 ## Testing
 
 With Lua 5.1 and Python 3 installed, run from the SND directory:

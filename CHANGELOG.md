@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.2
+
+### Public API changes
+
+Existing options declarations need no migration. Untitled sections previously reserved a blank heading row; now they flow without one. Wide fields now place the label beside the control, and the selected tab has an accent underline.
+
+Profile page sections previously did not render; now they follow the built-in commands:
+
+```lua
+-- Before: built-in profile commands only.
+local profiles = SND.Pages.Profiles()
+-- After: optionally append ordinary sections.
+profiles.sections = {{controls={{type="description", text="Profiles store appearance."}}}}
+```
+
+### Internal improvements
+
+- Theme dropdown, checkbox, input, slider and scrollbar chrome consistently while retaining native menu behavior.
+- Dim disabled controls, measure field labels and avoid empty heading rows.
+- Verify page reuse, profile sections, compact rows and selected-tab state offline. Native input and rendering still require client verification.
+
 ## 0.4.1
 
 ### Public API changes

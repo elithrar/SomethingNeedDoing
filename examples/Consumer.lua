@@ -28,6 +28,9 @@ local preview
 local function paint(color)
     if preview then preview:SetBackdropColor(unpack(color)) end
 end
+-- Optional consumer shortcuts follow the framework-owned profile commands.
+local profiles = SND.Pages.Profiles()
+profiles.sections = {{controls={{type='description',text='Each profile stores its own appearance.'}}}}
 local panel = app:Options({
     title = ADDON,
     pages = {{ id = 'appearance', label = 'Appearance', sections = {{
@@ -38,7 +41,7 @@ local panel = app:Options({
             { type = 'select', key = 'theme', label = 'Theme', choices = app.ui:Themes() },
             { type = 'slider', key = 'fontSize', label = 'Font size' },
         },
-    }} }, SND.Pages.Profiles()},
+    }} }, profiles},
 })
 local registered, err = app:Slash('/sndexample', function()
     local ok, failure = panel:Toggle()

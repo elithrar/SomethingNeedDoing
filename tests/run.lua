@@ -85,7 +85,7 @@ end)
 
 test('options construction and menu lifetime','failed builds are retryable and settings refresh never rebuilds an open menu',function()
     local a=app(basic);local panel=a:Options({pages={{id='appearance',sections={{title='Font',controls={{type='font',key='font',label='Font'},{type='checkbox',key='enabled',label='Enabled'},{type='slider',key='scale',label='Scale',step=.1}}}}}}})
-    boot(a);W.failTemplate='UIPanelScrollBarTemplate';assert(not panel:Open());assert(panel:Open())
+    boot(a);W.failKind='Slider';assert(not panel:Open());assert(panel:Open())
     local d=panel._menus['appearance:1:1'];d:OpenMenu();assert(a:Set('font','Missing font'));assert(panel._refreshPending)
     d:CloseMenu();W.tick(.01);assert(not panel._refreshPending)
     local check=panel._pool['appearance:1:2'];check:SetChecked(false);check.scripts.OnClick(check);assert(a:Get('enabled')==false)
@@ -395,6 +395,30 @@ test('font family retry and native read failures','both consumers require regula
     end)
     create=true;assert(a:Set('font','New'));assert(body.font==measured and body.font~='New.ttf')
     GameFontNormal.fontSize=normalSize;W.event('PLAYER_LOGOUT');LibStub=nil
+end)
+
+
+-- XPIsland's migration exposed stacked fields in a wide shell, absent selected
+-- tabs, and native gold chrome overflowing otherwise flat theme surfaces.
+test('compact options presentation','aligned fields, disabled feedback and selected navigation survive refresh and page reuse',function()
+    local a=app(basic)
+    local profiles=W.load('ProfilePageDefinition').Pages.Profiles()
+    profiles.sections={{title='Shortcuts',controls={{type='button',id='extra',label='Extra action',action=function()end}}}}
+    local panel=a:Options({width=560,pages={{id='settings',label='Settings',sections={{controls={
+        {type='font',id='font',key='font',label='Font',enabled=function(app)return app:Get('enabled')end},
+        {type='checkbox',id='enabled',key='enabled',label='Enabled'},
+    }}}},profiles}})
+    boot(a);assert(panel:Open())
+    local menu=panel._pool['settings:1:font'];local label=panel._texts['settings:1:font:label']
+    assert(menu.points[2]==270 and label.points[2]==0,'field and label use separate columns')
+    assert(not panel._texts['settings:section:1'],'untitled sections must not consume an empty heading row')
+    assert(panel._pool['tab:settings']._selected:IsShown() and not panel._pool['tab:profiles']._selected:IsShown())
+    assert(a:Set('enabled',false));assert(menu.alpha==.45 and not menu.enabled)
+    assert(a:Set('enabled',true));assert(menu.alpha==1 and menu.enabled)
+    assert(panel.bar.template=='BackdropTemplate' and panel.bar.thumb==panel.bar._thumb)
+    assert(panel:SelectPage('profiles'));assert(panel._pool['profiles:1:extra']:IsShown())
+    assert(panel._pool['tab:profiles']._selected:IsShown() and not panel._pool['tab:settings']._selected:IsShown())
+    local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
 end)
 
 print('PASS '..total..' focused tests')
