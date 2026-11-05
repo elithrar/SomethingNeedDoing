@@ -128,7 +128,7 @@ if not ok then app.log:Warn(err.message) end
 view:Cancel()
 ```
 
-Options align fields beside labels when space permits and mark the selected tab. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
+Options reflow fields, section columns and tabs at the available width, preserving readable text. Captions wrap instead of shrinking. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
 
 ## Testing
 
@@ -164,3 +164,21 @@ or from good inputs rather than trying to review their outputs and fix them.
 ## License
 
 Apache 2.0 licensed. See the [LICENSE](LICENSE) file for details.
+
+### Shared form geometry
+
+Set `layout` on an options panel or section; compact controls keep their place in the field column:
+
+```lua
+local panel = app:Options({layout={fieldWidth=220, minLabelWidth=160}, pages={
+    {id="appearance", label="Appearance", sections={
+        {controls={{type="color", key="tint", label="Tint", width=36}}},
+        {layout={columns=2, minColumnWidth=200}, controls={
+            {type="button", label="Preview", align="stretch", action=function() preview:Show() end},
+            {type="button", label="Hide preview", align="stretch", action=function() preview:Hide() end},
+        }},
+    }},
+}})
+```
+
+Declare bound settings first. Custom panels can use `ui:Control(parent, id, kind)` for reusable native controls, `layout:Row(parent, spec)` for measured placement, and `layout:Columns(width, spec)` for responsive columns. Check construction/row Results; column calculation returns count and width directly. Values, menus and callbacks remain with the consumer. See [the form API](API.md#form-layout-and-custom-controls) and [executable example](examples/Consumer.lua).

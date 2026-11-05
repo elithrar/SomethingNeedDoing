@@ -17,6 +17,18 @@ local function safeFrame(frame)
     return ok and safe
 end
 I.safeFrame = safeFrame
+local layoutDefaults={fieldWidth=230,minLabelWidth=174,gap=16,rowGap=8,columns=1,minColumnWidth=220,columnGap=16}
+function I.formLayout(spec,base)
+    I.check(spec==nil or I.plain(spec),'form layout must be a plain table')
+    local result=I.copy(base or layoutDefaults)
+    for key,value in pairs(spec or {})do
+        I.check(layoutDefaults[key]~=nil,'unknown form layout option: '..tostring(key))
+        I.check(V.Number(value) and value>=((key=='gap' or key=='rowGap' or key=='columnGap') and 0 or 1),'invalid form dimension')
+        result[key]=value
+    end
+    I.check(result.columns==math.floor(result.columns) and result.columns<=4,'columns must be an integer from 1 to 4')
+    return result
+end
 -- Presets are copied at declaration; consumers can extend tokens for their own renderers.
 SND.Themes = {
     modern = { label='Modern', colors={surface={.035,.04,.055,.97},border={.19,.20,.23,1},accent={.86,.79,.63,1},text={.93,.94,.97,1},muted={.65,.65,.68,1}}, border='thin' },
@@ -351,6 +363,111 @@ SND._install[#SND._install + 1] = function(app)
             fonts:Refresh()
         end
         if app:IsReady() then activate() else app:OnReady(activate) end
+    end
+    -- One constructor contract for generated options and consumer-owned views.
+    -- Cache before decoration so a failed native attachment can reuse its frame.
+    local controlPool=setmetatable({}, {__mode='k'})
+    local controlTypes={button={'Button','BackdropTemplate','button'},checkbox={'CheckButton','BackdropTemplate','checkbox'},
+        input={'EditBox','InputBoxScriptTemplate,BackdropTemplate','input'},
+        dropdown={'DropdownButton','WowStyle1DropdownTemplate,BackdropTemplate','dropdown'},slider={'Slider','BackdropTemplate','slider'}}
+    function ui:Control(parent,id,kind)
+        I.check(type(id)=='string' and id~='' and controlTypes[kind], 'control requires a stable id and supported kind')
+        if app._disposed or not safeFrame(parent) then return false,I.error('unavailable')end
+        local pool=controlPool[parent];if not pool then pool={};controlPool[parent]=pool end
+        local entry=pool[id];I.check(not entry or entry.kind==kind,'control id cannot change kind')
+        local ok,result=pcall(function()
+            if not entry then
+                local definition=controlTypes[kind]
+                entry={kind=kind,frame=CreateFrame(definition[1],nil,parent,definition[2])};pool[id]=entry
+            end
+            local f=entry.frame
+            f:EnableMouse(true)
+            if kind=='button' or kind=='checkbox' then f:RegisterForClicks('LeftButtonUp')end
+            if kind=='input' then
+                f:SetAutoFocus(false);f:SetTextInsets(8,8,0,0)
+            end
+            if not entry.behavior then
+                local owner=app:Scope()
+                local attached,err=owner:PostHook(f,'SetEnabled',function(self)self:SetAlpha(self:IsEnabled() and 1 or .45)end)
+                if attached and kind=='input' then attached,err=owner:HookScript(f,'OnHide',function(self)self:ClearFocus()end)end
+                if not attached then owner:Cancel();error(err,0)end
+                entry.behavior=owner
+            end
+            f:SetAlpha(f:IsEnabled() and 1 or .45)
+            local styled,err=ui:Style(f,controlTypes[kind][3])
+            if not styled then entry.behavior:Cancel();entry.behavior=nil;error(err,0)end
+            return f
+        end)
+        if not ok then return false,I.error('unavailable',result)end
+        return true,result
+    end
+    -- Stateless geometry: no subscriptions, frame allocation or settings binding.
+    function layout:Columns(width,spec)
+        I.check(V.Number(width) and width>0,'positive content width required')
+        local s=I.formLayout(spec)
+        local count=math.max(1,math.min(s.columns,math.floor((width+s.columnGap)/(s.minColumnWidth+s.columnGap))))
+        return count,(width-(count-1)*s.columnGap)/count
+    end
+    function layout:Row(parent,spec)
+        I.check(I.plain(spec) and V.Number(spec.width) and spec.width>0,'row requires a positive width')
+        local s=I.formLayout(spec.layout)
+        local kind=spec.kind or 'field'
+        I.check(kind=='field' or kind=='check' or kind=='action' or kind=='text','invalid row kind')
+        local x,y=spec.x or 0,spec.y or 0
+        I.check(V.Number(x) and V.Number(y),'row offsets must be finite')
+        I.check(spec.controlWidth==nil or (V.Number(spec.controlWidth) and spec.controlWidth>0),'positive control width required')
+        I.check(spec.align==nil or spec.align=='start' or spec.align=='field' or spec.align=='stretch','invalid action alignment')
+        local label,control,hint=spec.label,spec.control,spec.hint
+        if app._disposed or not safeFrame(parent) then return false,I.error('unavailable')end
+        for _,object in pairs({label=label,control=control,hint=hint})do
+            if not safeFrame(object) then return false,I.error('unavailable')end
+        end
+        I.check((kind=='text' and label) or (kind~='text' and control),'row content required')
+        I.check(kind~='field' or label,'field requires a label')
+        I.check(not control or control:GetParent()==parent,'row control must belong to its parent')
+        I.check(not label or label:GetParent()==(kind=='action' and control or parent),'row label has the wrong parent')
+        I.check(not hint or hint:GetParent()==parent,'row hint must belong to its parent')
+        local ok,height=pcall(function()
+            local width=spec.width
+            local fieldWidth=math.min(s.fieldWidth,width)
+            local inline=width>=s.fieldWidth+s.gap+s.minLabelWidth
+            local function measure(text,w)
+                text:SetScale(1);text:SetWidth(math.max(1,w));text:SetHeight(0);text:SetWordWrap(true)
+                return text:GetStringHeight()
+            end
+            local function place(object,px,py)
+                object:ClearAllPoints();object:SetPoint('TOPLEFT',px,-py)
+            end
+            local h=0
+            if kind=='field' then
+                local lh=measure(label,inline and width-fieldWidth-s.gap or width)
+                control:SetWidth(math.min(spec.controlWidth or fieldWidth,fieldWidth))
+                local ch=control:GetHeight()
+                place(label,x,y+(inline and math.max(0,(ch-lh)/2) or 0))
+                place(control,x+(inline and width-fieldWidth or 0),y+(inline and 0 or lh+6))
+                h=inline and math.max(lh,ch) or lh+6+ch
+            elseif kind=='check' then
+                local ch=control:GetHeight();local cw=control:GetWidth()
+                local lh=label and measure(label,width-cw-8) or 0
+                h=math.max(ch,lh);place(control,x,y)
+                if label then place(label,x+cw+8,y+math.max(0,(ch-lh)/2))end
+                control:SetHitRectInsets(0,-math.max(0,width-cw),0,-math.max(0,h-ch))
+            elseif kind=='action' then
+                local available=spec.align=='field' and inline and fieldWidth or width
+                local cw=spec.align=='stretch' and width or math.min(spec.controlWidth or s.fieldWidth,available)
+                control:SetWidth(cw)
+                h=math.max(26,(label and measure(label,cw-16) or 0)+10);control:SetHeight(h)
+                place(control,x+(spec.align=='field' and inline and width-fieldWidth or 0),y)
+                if label then
+                    label:ClearAllPoints();label:SetPoint('CENTER',control,'CENTER');label:SetHeight(h-10)
+                    label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE')
+                end
+            else h=measure(label,width);place(label,x,y)end
+            if hint then local hh=measure(hint,width);place(hint,x,y+h+6);h=h+6+hh end
+            return h+s.rowGap
+        end)
+        if not ok then return false,I.error('unavailable',height)end
+        return true,height
     end
     local function geometry(frame)
         if not safeFrame(frame) or not frame.GetLeft then return end

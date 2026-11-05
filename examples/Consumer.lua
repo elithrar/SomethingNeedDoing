@@ -33,11 +33,12 @@ local profiles = SND.Pages.Profiles()
 profiles.sections = {{controls={{type='description',text='Each profile stores its own appearance.'}}}}
 local panel = app:Options({
     title = ADDON,
+    layout = {fieldWidth=220, minLabelWidth=160},
     pages = {{ id = 'appearance', label = 'Appearance', sections = {{
         title = 'Appearance', controls = {
             { type = 'slider', key = 'scale', label = 'Scale', step = .05 },
             { type = 'font', key = 'font', label = 'Font' },
-            { type = 'color', key = 'tint', label = 'Tint', preview = paint },
+            { type = 'color', key = 'tint', label = 'Tint', width = 36, preview = paint },
             { type = 'select', key = 'theme', label = 'Theme', choices = app.ui:Themes() },
             { type = 'slider', key = 'fontSize', label = 'Font size' },
         },
@@ -56,13 +57,18 @@ app:OnReady(function()
     local styled, styleError = app.ui:Style(preview,'section')
     if not styled then app.log:Warn(styleError.message) end
     -- Custom panels can share the same chrome as generated options.
-    local toggle=CreateFrame('CheckButton',nil,preview,'BackdropTemplate')
+    local created,toggle=app.ui:Control(preview,'toggle','checkbox')
+    if not created then error(toggle.message)end
     toggle:SetSize(20,20);toggle:SetPoint('TOPRIGHT',-4,-4)
     local ok,failure=app.ui:Style(toggle,'checkbox')
     if not ok then app.log:Warn(failure.message)end
     toggle:SetScript('OnClick',function(self)preview:SetAlpha(self:GetChecked() and .6 or 1)end)
+    local toggleLabel=preview:CreateFontString(nil,'OVERLAY','GameTooltipText')
+    toggleLabel:SetText('Dim preview')
+    local labelFont,labelError=app.fonts:Apply(toggleLabel,'control')
+    if not labelFont then error(labelError.message)end
     local label=preview:CreateFontString(nil,'OVERLAY','GameTooltipText')
-    label:SetPoint('CENTER');label:SetText('Ready')
+    label:SetPoint('TOPLEFT',12,-12);label:SetText('Ready')
     local applied, fontError = app.fonts:Apply(label,'body')
     if not applied then app.log:Warn(fontError.message) end
     local colored, colorError = app.ui:Color(label,'text')
@@ -74,7 +80,9 @@ app:OnReady(function()
     local owner = app:Scope('example-view')
     owner:Watch(app:SelectAppearance(function(value)return value end),function()
         local width,height=app.fonts:Measure(label)
-        preview:SetSize(math.max(120,width+24),math.max(40,height+16))
+        preview:SetSize(math.max(180,width+24),math.max(72,height+52))
+        local laidOut,rowHeight=app.layout:Row(preview,{kind='check',width=preview:GetWidth()-24,x=12,y=height+20,control=toggle,label=toggleLabel})
+        if not laidOut then error(rowHeight.message)end
         paint(app:Get('tint')) -- An explicit user tint takes precedence over the theme surface.
     end)
     owner:Watch(appearance, function(value)
