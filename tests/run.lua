@@ -85,7 +85,7 @@ end)
 
 test('options construction and menu lifetime','failed builds are retryable and settings refresh never rebuilds an open menu',function()
     local a=app(basic);local panel=a:Options({pages={{id='appearance',sections={{title='Font',controls={{type='font',key='font',label='Font'},{type='checkbox',key='enabled',label='Enabled'},{type='slider',key='scale',label='Scale',step=.1}}}}}}})
-    boot(a);W.failTemplate='UIPanelScrollBarTemplate';assert(not panel:Open());assert(panel:Open())
+    boot(a);W.failKind='Slider';assert(not panel:Open());assert(panel:Open())
     local d=panel._menus['appearance:1:1'];d:OpenMenu();assert(a:Set('font','Missing font'));assert(panel._refreshPending)
     d:CloseMenu();W.tick(.01);assert(not panel._refreshPending)
     local check=panel._pool['appearance:1:2'];check:SetChecked(false);check.scripts.OnClick(check);assert(a:Get('enabled')==false)
@@ -395,6 +395,62 @@ test('font family retry and native read failures','both consumers require regula
     end)
     create=true;assert(a:Set('font','New'));assert(body.font==measured and body.font~='New.ttf')
     GameFontNormal.fontSize=normalSize;W.event('PLAYER_LOGOUT');LibStub=nil
+end)
+
+
+-- XPIsland's migration exposed stacked fields in a wide shell, absent selected
+-- tabs, and native gold chrome overflowing otherwise flat theme surfaces.
+test('compact options presentation','aligned fields, disabled feedback and selected navigation survive refresh and page reuse',function()
+    local a=app(basic)
+    local profiles=W.load('ProfilePageDefinition').Pages.Profiles()
+    profiles.sections={{title='Shortcuts',controls={{type='button',id='extra',label='Extra action',action=function()end}}}}
+    local panel=a:Options({width=560,pages={{id='settings',label='Settings',sections={{controls={
+        {type='font',id='font',key='font',label='Font',enabled=function(app)return app:Get('enabled')end},
+        {type='checkbox',id='enabled',key='enabled',label='Enabled'},
+    }}}},profiles}})
+    boot(a);assert(panel:Open())
+    local menu=panel._pool['settings:1:font'];local label=panel._texts['settings:1:font:label']
+    assert(menu.points[2]==270 and label.points[2]==0,'field and label use separate columns')
+    assert(not panel._texts['settings:section:1'],'untitled sections must not consume an empty heading row')
+    assert(panel._pool['tab:settings']._selected:IsShown() and not panel._pool['tab:profiles']._selected:IsShown())
+    assert(a:Set('enabled',false));assert(menu.alpha==.45 and not menu.enabled)
+    assert(a:Set('enabled',true));assert(menu.alpha==1 and menu.enabled)
+    assert(panel.bar.template=='BackdropTemplate' and panel.bar.thumb==panel.bar._thumb)
+    assert(panel:SelectPage('profiles'));assert(panel._pool['profiles:1:extra']:IsShown())
+    assert(panel._pool['tab:profiles']._selected:IsShown() and not panel._pool['tab:settings']._selected:IsShown())
+    local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
+end)
+
+test('shared native control styling','native state changes preserve the palette, failed art creation retries without leaks, and refresh preserves slider gestures',function()
+    local a,sdk=app(basic);boot(a)
+    local menu=CreateFrame('DropdownButton',nil,UIParent,'WowStyle1DropdownTemplate,BackdropTemplate')
+    assert(a.ui:Style(menu,'dropdown'));menu:OnButtonStateChanged()
+    assert(menu.Text.textColor[1]==sdk.Themes.modern.colors.text[1] and not menu.Arrow:IsShown())
+    local slider=CreateFrame('Slider',nil,UIParent,'BackdropTemplate')
+    local original=slider.SetThumbTexture
+    slider.SetThumbTexture=function()error('thumb failure')end
+    assert(not a.ui:Style(slider,'slider'));local count=#W.frames
+    slider.SetThumbTexture=original;assert(a.ui:Style(slider,'slider'));assert(#W.frames==count)
+    slider:SetEnabled(false);assert(slider.alpha==.45);slider:SetEnabled(true);assert(slider.alpha==1)
+    local panel=a:Options({width=320,pages={{id='settings',label='Settings',sections={{controls={
+        {type='slider',id='scale',key='scale',label='Scale',min=.5,max=2,step=.1},
+    }}}},sdk.Pages.Profiles()}})
+    assert(panel:Open());local control=panel._pool['settings:1:scale'];local hides=0
+    control:HookScript('OnHide',function()hides=hides+1 end)
+    local originalSet=control.SetValue;local nested=0
+    control.SetValue=function(self,value)
+        originalSet(self,value)
+        if nested==0 then nested=1;assert(panel:Refresh())end
+    end
+    assert(a:Set('scale',1.2));assert(nested==1 and panel:IsShown())
+    assert(hides==0,'value refresh must not end a drag by hiding its slider')
+    assert(panel:SelectPage('profiles'));assert(hides==1)
+    for _,widget in pairs(panel._pool)do
+        if widget:GetParent()==panel.body and widget:IsShown() then
+            assert(widget:GetWidth()<=panel.body:GetWidth(),'profile controls fit narrow body')
+            assert((widget.points[2] or 0)==0,'narrow profile actions stack')
+        end
+    end
 end)
 
 print('PASS '..total..' focused tests')

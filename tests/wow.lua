@@ -6,13 +6,30 @@ local function object(kind,parent)
     setmetatable(f,{__index=methods});W.frames[#W.frames+1]=f;return f
 end
 function CreateFrame(kind,name,parent,template)
-    if W.failTemplate and W.failTemplate==template then W.failTemplate=nil;error('simulated constructor failure') end
+    if W.failKind==kind then W.failKind=nil;error('simulated constructor failure') end
+    if W.failTemplate and template and template:find(W.failTemplate,1,true) then W.failTemplate=nil;error('simulated constructor failure') end
     local f=object(kind,parent);f.template=template
     if name then _G[name]=f end
     if template=='UICheckButtonTemplate' or kind=='DropdownButton' then f.Text=object('FontString',f) end
+    if kind=='DropdownButton' then
+        f.Background=object('Texture',f);f.Arrow=object('Texture',f)
+        f.OnButtonStateChanged=function(self) self.Text:SetTextColor(1,1,1,1)end
+    end
     return f
 end
 function CreateFont(name)local f=object('Font');_G[name]=f;return f end
+function methods:CreateTexture()return object('Texture',self)end
+function methods:SetTexture(value)self.texture=value end
+function methods:SetColorTexture(...)self.color={...}end
+function methods:SetVertexColor(...)self.tint={...}end
+function methods:SetAllPoints(other)self.all=other end
+function methods:SetRotation(value)self.rotation=value end
+function methods:SetDisabledCheckedTexture(texture)self.disabledCheckedTexture=texture end
+function methods:IsEnabled()return self.enabled end
+function methods:SetCheckedTexture(texture)self.checkedTexture=texture end
+function methods:SetThumbTexture(texture)self.thumb=texture end
+function methods:SetAlpha(value)self.alpha=value end
+function methods:SetOrientation(value)self.orientation=value end
 function methods:CreateFontString()return object('FontString',self)end
 function methods:SetScript(name,fn)self.scripts[name]=fn end
 function methods:GetScript(name)return self.scripts[name]end
@@ -53,10 +70,14 @@ end
 function methods:GetFont()return self.font or 'Fonts\\FRIZQT__.TTF',self.fontSize or 13,self.flags or ''end
 function methods:SetFontObject(font)self.font,self.fontSize,self.flags=font:GetFont()end
 function methods:SetText(value)self.text=tostring(value or '')end
+function methods:SetTextColor(...)self.textColor={...}end
 function methods:GetText()return self.text end
 function methods:GetStringWidth()return #self.text*7 end
 function methods:GetStringHeight()return math.max(14,math.ceil(#self.text*7/self.width)*14)end
-function methods:SetEnabled(value)self.enabled=value end
+function methods:SetEnabled(value)
+    local changed=self.enabled~=value;self.enabled=value
+    local fn=self.scripts[value and 'OnEnable' or 'OnDisable'];if changed and fn then fn(self)end
+end
 function methods:SetChecked(value)self.checked=value end
 function methods:GetChecked()return self.checked end
 function methods:SetMinMaxValues(low,high)self.minimum,self.maximum=low,high end
@@ -88,7 +109,7 @@ function methods:IsForbidden()return self.forbidden==true end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
 function methods:ClearFocus()self.focus=false end
-for _,name in ipairs({'SetFrameStrata','EnableMouse','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV','SetTextColor'})do methods[name]=function()end end
+for _,name in ipairs({'SetTextInsets','SetFrameStrata','EnableMouse','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)
 GameFontNormal=object('Font');GameTooltipText=object('Font')
 ColorPickerFrame=object('Frame');ColorPickerFrame:Hide()

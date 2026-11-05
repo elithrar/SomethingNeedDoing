@@ -93,7 +93,7 @@ if not colored then app.log:Warn(colorError.message) end
 ```
 
 A `theme` setting selects the palette. The [executable example](examples/Consumer.lua)
-shows custom themes and `SelectAppearance` observers for remeasuring custom views.
+shows custom themes, shared checkbox styling and `SelectAppearance` observers for remeasuring custom views. Custom options panels can use the `dropdown`, `checkbox`, `slider` and `scrollbar` style roles; see [API.md](API.md) for their native frame/template requirements.
 
 ## Design Notes
 
@@ -127,6 +127,8 @@ if not ok then app.log:Warn(err.message) end
 -- In the view's close handler:
 view:Cancel()
 ```
+
+Options align fields beside labels when space permits and mark the selected tab. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
 
 ## Testing
 

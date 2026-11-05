@@ -13,7 +13,7 @@ local function boot(app)W.event('ADDON_LOADED',app.name)end
 local function factory(name)local sdk=W.load(name);return sdk:NewAddon(name),sdk end
 
 -- XPIsland: real sampling model + account profiles with delayed character association.
-local XP=loadAddon('XPIsland',{'Model.lua'}).Model
+local XP=loadAddon('XPIsland',{'Themes.lua','Model.lua'}).Model
 local xp,sdk=factory('XPIntegration')
 local function accountAdapter()
     local A={}
