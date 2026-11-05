@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1
+
+### Public API changes
+
+**No public API changes.** Existing options declarations and commands need no migration. Previously tab selection hid/reopened the shell, and a native cleanup failure could leave the named page scope active; a later open then raised `scope name already active`. Tabs now replace the page in place, and reopening cancels any stale view before attaching a fresh private scope. Recursive opens/page switches return a failed Result during the active transition.
+
+### Internal improvements
+
+- Cancel and detach page observers before native editor/menu cleanup; report cleanup errors while continuing to release the remaining resources.
+- Close only open dropdown menus, avoiding native selection updates on already-closed controls.
+- Guard reentrant transitions and clean up partially opened pages after native show or observer failures.
+- Reproduce the reported scope-collision error against 0.5.0 and cover interrupted hide, native cleanup failure, tabs, settings writes, repeated reopening and frame reuse.
+
 ## 0.5.0
 
 ### Public API changes

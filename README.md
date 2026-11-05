@@ -128,7 +128,7 @@ if not ok then app.log:Warn(err.message) end
 view:Cancel()
 ```
 
-Options reflow fields, section columns and tabs at the available width, preserving readable text. Captions wrap instead of shrinking. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
+Options reflow fields, section columns and tabs at the available width, preserving readable text. Captions wrap instead of shrinking. Tabs switch page content without closing the shell; interrupted cleanup does not leave the page lifetime registered or block reopening. Omit a section title for an uninterrupted list; assign `sections` to `SND.Pages.Profiles()` to append addon-specific shortcuts below its profile commands. See [the executable consumer](examples/Consumer.lua).
 
 ## Testing
 

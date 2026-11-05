@@ -561,4 +561,49 @@ test('responsive options sections','screen changes collapse fields, columns and 
     UIParent:SetSize(old,oldHeight);W.event('DISPLAY_SIZE_CHANGED')
 end)
 
+-- User report: native navigation/closing left options-page registered, so the
+-- next slash command raised "scope name already active". Native DropdownButton
+-- CloseMenu also calls SignalUpdate when closed (Forever 70338, DropdownButton.lua),
+-- unlike the old fixture. A failing cleanup must never retain the page observer.
+test('options navigation and cleanup recovery','tabs replace the page without hiding the shell, and failed cleanup cannot block reopening',function()
+    local a=app(basic);local panel=a:Options({pages={
+        {id='appearance',sections={{controls={{type='font',id='font',key='font',label='Font'}}}}},
+        {id='behavior',sections={{controls={{type='checkbox',id='enabled',key='enabled',label='Enabled'}}}}},
+    }})
+    boot(a);assert(panel:Open());local first=panel._view
+    local hides=0;panel.frame:HookScript('OnHide',function()hides=hides+1 end)
+    local menu=panel._pool['appearance:1:font'];local closeMenu=menu.CloseMenu
+    menu.CloseMenu=function(self)closeMenu(self);error('native selection refresh failed after closing')end
+    -- Closed native dropdowns do not need CloseMenu/SignalUpdate at navigation.
+    assert(W.click(panel._pool['tab:behavior']))
+    assert(panel._page=='behavior' and panel._pool['behavior:1:enabled']:IsShown())
+    assert(not first.active and hides==0,'tab navigation must not hide/reopen the shell')
+    assert(W.click(panel._pool['tab:appearance']));menu:OpenMenu()
+    local second=panel._view
+    assert(pcall(panel.frame.Hide,panel.frame));assert(not panel:IsShown() and not second.active and panel._view==nil)
+    menu.CloseMenu=closeMenu;assert(panel:Open('behavior'))
+    local check=panel._pool['behavior:1:enabled'];check:SetChecked(false);assert(W.click(check));assert(not a:Get('enabled'))
+    -- Recover the reported hidden-window/stale-owner state, even when a native
+    -- OnHide callback was previously interrupted before cleanup completed.
+    local stale=panel._view;panel.frame.shown=false
+    assert(panel:Open('appearance'));assert(not stale.active and panel._view.active)
+    assert(W.click(panel._pool['tab:behavior']));check:SetChecked(true);assert(W.click(check));assert(a:Get('enabled'))
+    local nested=false
+    panel.frame:HookScript('OnShow',function()
+        local ok,err=panel:Open();assert(not ok and err.code=='reentrant');nested=true
+    end)
+    local count=#W.frames
+    for _=1,10 do panel.frame:Hide();assert(panel:Open());assert(W.click(panel._pool['tab:appearance']));assert(W.click(panel._pool['tab:behavior']))end
+    assert(nested and #W.frames==count)
+    panel:Close();assert(panel._view==nil)
+    local closeOnShow=true
+    panel.frame:HookScript('OnShow',function()if closeOnShow then closeOnShow=false;assert(panel:Close())end end)
+    assert(not panel:Open());assert(not panel:IsShown() and panel._view==nil)
+    assert(panel:Open());assert(panel._view.active)
+    panel:Close()
+    local show=panel.frame.Show;panel.frame.Show=function()error('native show failed')end
+    assert(not panel:Open());assert(panel._view==nil and not panel._opening)
+    panel.frame.Show=show;assert(panel:Open());assert(panel._view.active)
+end)
+
 print('PASS '..total..' focused tests')
