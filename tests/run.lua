@@ -437,7 +437,13 @@ test('shared native control styling','native state changes preserve the palette,
     }}}},sdk.Pages.Profiles()}})
     assert(panel:Open());local control=panel._pool['settings:1:scale'];local hides=0
     control:HookScript('OnHide',function()hides=hides+1 end)
-    assert(a:Set('scale',1.2));assert(hides==0,'value refresh must not end a drag by hiding its slider')
+    local originalSet=control.SetValue;local nested=0
+    control.SetValue=function(self,value)
+        originalSet(self,value)
+        if nested==0 then nested=1;assert(panel:Refresh())end
+    end
+    assert(a:Set('scale',1.2));assert(nested==1 and panel:IsShown())
+    assert(hides==0,'value refresh must not end a drag by hiding its slider')
     assert(panel:SelectPage('profiles'));assert(hides==1)
     for _,widget in pairs(panel._pool)do
         if widget:GetParent()==panel.body and widget:IsShown() then

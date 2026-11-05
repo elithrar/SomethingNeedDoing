@@ -379,8 +379,11 @@ SND._install[#SND._install + 1] = function(app)
         end
         function panel:Refresh()
             if not self:IsShown() then return true end
+            if self._refreshing then self._refreshAgain=true;return true end
             if self:_menuOpen() then self._refreshPending=true;return true end
             self._refreshPending=nil
+            for pass=1,3 do
+            self._refreshAgain=nil
             local ok,err=pcall(function()
                 self._refreshing=true
                 local scale=math.max(.1,math.min(1,(UIParent:GetWidth()-16)/(spec.width or 640)));self.frame:SetScale(scale)
@@ -427,7 +430,10 @@ SND._install[#SND._install + 1] = function(app)
             end)
             self._refreshing=nil;self._used,self._usedText=nil,nil
             if not ok then self:Close();I.report(app,err);return false,I.error('build',err) end
-            return true
+            if not self._refreshAgain then return true end
+            end
+            self._refreshAgain=nil
+            self:Close();return false,I.error("build","Options layout did not settle after three passes")
         end
         function panel:Open(pageID)
             if not app._ready then return false,I.error('notReady') end
