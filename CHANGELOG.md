@@ -15,10 +15,14 @@ local profiles = SND.Pages.Profiles()
 profiles.sections = {{controls={{type="description", text="Profiles store appearance."}}}}
 ```
 
+Existing custom panels can now share native control styling with `ui:Style(frame, "dropdown" | "checkbox" | "slider" | "scrollbar")`; see API.md for required frame templates. Previously those panels had to maintain their own decorative textures.
+
 ### Internal improvements
 
 - Theme dropdown, checkbox, input, slider and scrollbar chrome consistently while retaining native menu behavior.
 - Dim disabled controls, measure field labels and avoid empty heading rows.
+- Keep native dropdown state changes in the active palette; reuse partial control artwork after construction failures.
+- Stack profile actions in narrow panels and preserve visible controls during value refresh, so slider drags are not interrupted.
 - Verify page reuse, profile sections, compact rows and selected-tab state offline. Native input and rendering still require client verification.
 
 ## 0.4.1

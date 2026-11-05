@@ -295,7 +295,7 @@ local placed, placement = app.layout:PlacePopup(menu, button, {
 
 | API | Contract |
 | --- | --- |
-| `ui:Style(frame, role) -> ok, errorOrNil` | Register a frame for the active theme using roles: `dialog`, `section`, `button`, `tab`, `input`. Idempotent; preserve caller content and scripts. |
+| `ui:Style(frame, role) -> ok, errorOrNil` | Register a frame for the active theme using roles: `dialog`, `section`, `button`, `tab`, `input`, `dropdown`, `checkbox`, `slider`, `scrollbar`. Idempotent; preserve caller content and scripts. Controls require `BackdropTemplate`; dropdown also requires `WowStyle1DropdownTemplate`, checkbox a bare `CheckButton`, and slider/scrollbar a bare `Slider`. The control roles own decorative textures and disabled opacity, while callers own labels, values, orientation and geometry. |
 | `ui:Color(object, role) -> ok, errorOrNil` | Register a FontString/EditBox or texture for a named theme color. Reapply on theme changes; explicit product colors remain consumer-owned when unregistered. |
 | `ui:Themes() -> entries` | Defensive sorted `{label, value}` entries for a theme select control. |
 | `ui:Border(frame, kind) -> ok, errorOrNil` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background. These helpers require owned BackdropTemplate frames; they do not alter Blizzard NineSlice artwork. |

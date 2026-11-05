@@ -421,4 +421,30 @@ test('compact options presentation','aligned fields, disabled feedback and selec
     local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
 end)
 
+test('shared native control styling','native state changes preserve the palette, failed art creation retries without leaks, and refresh preserves slider gestures',function()
+    local a,sdk=app(basic);boot(a)
+    local menu=CreateFrame('DropdownButton',nil,UIParent,'WowStyle1DropdownTemplate,BackdropTemplate')
+    assert(a.ui:Style(menu,'dropdown'));menu:OnButtonStateChanged()
+    assert(menu.Text.textColor[1]==sdk.Themes.modern.colors.text[1] and not menu.Arrow:IsShown())
+    local slider=CreateFrame('Slider',nil,UIParent,'BackdropTemplate')
+    local original=slider.SetThumbTexture
+    slider.SetThumbTexture=function()error('thumb failure')end
+    assert(not a.ui:Style(slider,'slider'));local count=#W.frames
+    slider.SetThumbTexture=original;assert(a.ui:Style(slider,'slider'));assert(#W.frames==count)
+    slider:SetEnabled(false);assert(slider.alpha==.45);slider:SetEnabled(true);assert(slider.alpha==1)
+    local panel=a:Options({width=320,pages={{id='settings',label='Settings',sections={{controls={
+        {type='slider',id='scale',key='scale',label='Scale',min=.5,max=2,step=.1},
+    }}}},sdk.Pages.Profiles()}})
+    assert(panel:Open());local control=panel._pool['settings:1:scale'];local hides=0
+    control:HookScript('OnHide',function()hides=hides+1 end)
+    assert(a:Set('scale',1.2));assert(hides==0,'value refresh must not end a drag by hiding its slider')
+    assert(panel:SelectPage('profiles'));assert(hides==1)
+    for _,widget in pairs(panel._pool)do
+        if widget:GetParent()==panel.body and widget:IsShown() then
+            assert(widget:GetWidth()<=panel.body:GetWidth(),'profile controls fit narrow body')
+            assert((widget.points[2] or 0)==0,'narrow profile actions stack')
+        end
+    end
+end)
+
 print('PASS '..total..' focused tests')

@@ -4,7 +4,8 @@ local edges = {
     default='Interface\\Tooltips\\UI-Tooltip-Border', thin='Interface\\Buttons\\WHITE8X8',
     tooltip='Interface\\Tooltips\\UI-Tooltip-Border', dialog='Interface\\DialogFrame\\UI-DialogBox-Border',
 }
-local roles = { dialog=true, section=true, button=true, tab=true, input=true }
+local roles = { dialog=true, section=true, button=true, tab=true, input=true, dropdown=true, checkbox=true, slider=true, scrollbar=true }
+local controls = {dropdown=true,checkbox=true,slider=true,scrollbar=true}
 local function nativeObject(value)
     return V.Readable(value) and (type(value)=='table' or type(value)=='userdata')
 end
@@ -72,6 +73,44 @@ SND._install[#SND._install + 1] = function(app)
         frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8',edgeFile=edges[edge],edgeSize=edge=='thin' and 1 or edge=='dialog' and 16 or 12,
             insets={left=3,right=3,top=3,bottom=3}})
         frame:SetBackdropColor(unpack(theme.colors.surface));frame:SetBackdropBorderColor(unpack(theme.colors[styled[frame].hover and (not frame.IsEnabled or frame:IsEnabled()) and 'accent' or 'border']))
+        if controls[role] then
+            local art=frame._sndControlArt
+            if role=='dropdown' then
+                frame.Background:Hide();frame.Arrow:Hide()
+                frame.Text:SetTextColor(unpack(theme.colors.text))
+            end
+            for _,texture in pairs(art)do texture:SetVertexColor(unpack(theme.colors.accent))end
+            frame:SetAlpha(frame:IsEnabled() and 1 or .45)
+        end
+    end
+    local function prepareControl(frame,role)
+        if not controls[role] then return end
+        if frame._sndControlKind==role then return end
+        -- Cache even a partially constructed set: native objects are permanent,
+        -- so a failed SetThumbTexture/SetCheckedTexture must reuse its textures.
+        local art=frame._sndControlArt or {};frame._sndControlArt=art
+        local function texture(key)
+            if not art[key] then art[key]=frame:CreateTexture(nil,'ARTWORK')end
+            return art[key]
+        end
+        if role=='dropdown' then
+            I.check(frame.Background and frame.Arrow and frame.Text and type(frame.OnButtonStateChanged)=='function','dropdown requires WowStyle1DropdownTemplate')
+            for index=1,2 do
+                local line=texture(index);line:SetColorTexture(1,1,1,1);line:SetSize(6,1.5)
+                line:ClearAllPoints();line:SetPoint('RIGHT',frame,'RIGHT',index==1 and -13 or -9,0)
+                line:SetRotation(index==1 and -math.pi/4 or math.pi/4)
+            end
+        elseif role=='checkbox' then
+            for _,key in ipairs({'checked','disabled'})do
+                local mark=texture(key);mark:SetTexture('Interface\\Buttons\\UI-CheckBox-Check');mark:SetAllPoints(frame)
+            end
+            frame:SetCheckedTexture(art.checked);frame:SetDisabledCheckedTexture(art.disabled)
+        else
+            local thumb=texture('thumb');thumb:SetColorTexture(1,1,1,1)
+            thumb:SetSize(role=='slider' and 10 or 8,role=='slider' and 18 or 32)
+            frame:SetThumbTexture(thumb)
+        end
+        frame._sndControlKind=role
     end
     function ui:Border(frame,kind)
         I.check(not app._disposed,'appearance service is disposed')
@@ -92,28 +131,36 @@ SND._install[#SND._install + 1] = function(app)
         if not roles[role] then return false,I.error('invalid')end
         if not safeFrame(frame) or type(frame.SetBackdrop)~='function' or type(frame.SetBackdropColor)~='function' or type(frame.SetBackdropBorderColor)~='function' then return false,I.error('unavailable')end
         local record=styled[frame]
+        if record and record.role~=role then
+            if record.owner then record.owner:Cancel()end
+            styled[frame]=nil;record=nil
+        end
         local fresh=not record
         if not record then
             local disable=false
-            if role=='button' or role=='tab' then
+            if role=='button' or role=='tab' or controls[role] then
                 local ok,result=pcall(function()return frame.HasScript and frame:HasScript('OnDisable') or not frame.HasScript and frame.IsEnabled~=nil end)
                 if not ok then return false,I.error('unavailable',result)end
                 disable=result
             end
             record={role=role};styled[frame]=record
-            if role=='button' or role=='tab' then
+            if role=='button' or role=='tab' or controls[role] then
                 local owner=app:Scope();record.owner=owner
                 local events={'OnEnter','OnLeave','OnHide'}
-                if disable then events[#events+1]='OnDisable'end
+                if disable then events[#events+1]='OnDisable';events[#events+1]='OnEnable'end
                 for _,event in ipairs(events)do
                     local entering=event=='OnEnter'
                     local ok,err=owner:HookScript(frame,event,function(self)record.hover=entering and (not self.IsEnabled or self:IsEnabled());paint(self,record.role)end)
                     if not ok then owner:Cancel();styled[frame]=nil;return false,err end
                 end
+                if role=='dropdown' then
+                    local ok,err=owner:PostHook(frame,'OnButtonStateChanged',function()paint(frame,record.role)end)
+                    if not ok then owner:Cancel();styled[frame]=nil;return false,err end
+                end
             end
         end
         record.role=role
-        local ok,err=pcall(paint,frame,role)
+        local ok,err=pcall(function()prepareControl(frame,role);paint(frame,role)end)
         if not ok then
             if fresh then if record.owner then record.owner:Cancel()end;styled[frame]=nil end
             return false,I.error('unavailable',err)
