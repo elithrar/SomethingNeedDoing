@@ -97,21 +97,42 @@ SND._install[#SND._install + 1] = function(app)
         end
         local function report(ok,err) if not ok then app.log:Warn('Options action failed',{code=err and err.code or 'unknown'}) end end
         function panel:_cancelEditors(keepMenus)
+            if self._cancelingEditors then return end
+            self._cancelingEditors=true
             local edit=self._edit;self._edit=nil
             if edit then
                 if edit.preview then I.call(app,edit.preview,I.copy(edit.original)) end
-                if ColorPickerFrame and ColorPickerFrame.GetExtraInfo and ColorPickerFrame:GetExtraInfo()==edit then ColorPickerFrame:Hide() end
+                I.call(app,function()
+                    if ColorPickerFrame and ColorPickerFrame.GetExtraInfo and ColorPickerFrame:GetExtraInfo()==edit then ColorPickerFrame:Hide()end
+                end)
             end
-            if not keepMenus then for _, menu in pairs(self._menus) do if menu.CloseMenu then menu:CloseMenu() end end end
-            for _, control in pairs(self._pool) do if control.ClearFocus then control:ClearFocus() end end
-            if self.frame then self.frame:StopMovingOrSizing() end
+            if not keepMenus then
+                for _,menu in pairs(self._menus)do
+                    I.call(app,function()
+                        -- Native CloseMenu signals a selection update even when
+                        -- already closed. Only dismiss an actual owned popup.
+                        if menu.CloseMenu and (not menu.IsMenuOpen or menu:IsMenuOpen())then menu:CloseMenu()end
+                    end)
+                end
+            end
+            for _,control in pairs(self._pool)do
+                if control.ClearFocus then I.call(app,control.ClearFocus,control)end
+            end
+            if self.frame then I.call(app,self.frame.StopMovingOrSizing,self.frame)end
+            self._cancelingEditors=nil
         end
         function panel:_deactivate()
-            self._confirm=nil;self._profileError=nil
+            if self._deactivating then return end
+            self._deactivating=true
+            self._confirm=nil;self._profileError=nil;self._refreshPending=nil
+            -- Detach the lifetime before native cleanup or consumer callbacks.
+            -- A failure/reentrant hide must not strand a registered page scope.
+            local view=self._view;self._view=nil
+            local components=self._components;self._components={}
+            if view then view:Cancel()end
             self:_cancelEditors()
-            if self._view then self._view:Cancel();self._view=nil end
-            for _, component in pairs(self._components) do I.call(app,component.Hide,component) end
-            self._components={}
+            for _,component in pairs(components)do I.call(app,component.Hide,component)end
+            self._deactivating=nil
         end
         local function color(control)
             local picker=ColorPickerFrame
@@ -274,7 +295,7 @@ SND._install[#SND._install + 1] = function(app)
             local f=self._pool.shell;self.frame=f;f:Hide()
             f:SetSize(spec.width or 640,spec.height or 500);f:SetPoint('CENTER');f:SetFrameStrata('DIALOG');f:EnableMouse(true);f:SetMovable(true);f:RegisterForDrag('LeftButton')
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
-            f:SetScript('OnHide',function()self:_deactivate()end);requireResource(app.ui:Style(f,'dialog'))
+            f:SetScript('OnHide',function()if not self._closing then self:_deactivate()end end);requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading');title:SetPoint('TOPLEFT',16,-16)
             local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-44,16)
@@ -462,29 +483,59 @@ SND._install[#SND._install + 1] = function(app)
             self._refreshAgain=nil
             self:Close();return false,I.error("build","Options layout did not settle after three passes")
         end
-        function panel:Open(pageID)
-            if not app._ready then return false,I.error('notReady') end
-            if pageID and not ids[pageID] then return false,I.error('unknownPage') end
-            if self:IsShown() then if pageID then return self:SelectPage(pageID) end;return true end
-            if pageID then self._page=pageID end
-            if not self._built then local ok,err=pcall(self._build,self);if not ok then self:Close();return false,I.error('build',err) end end
-            self._view=app:Scope('options-page');self.frame:Show()
-            local opened,failure=self:Refresh();if not opened then return false,failure end
-            local owner=self._view
-            owner:Watch(app:SelectAppearance(function(value)return value end),function()self:Refresh()end)
-            if self._view~=owner then return false,I.error('build','Initial appearance refresh failed')end
-            if app._settingsStore then owner:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self._profileError=nil;self:Refresh()end) end
-            if self._view~=owner then return false,I.error('build','Initial settings refresh failed')end
+        function panel:_activate(pageID)
+            if self._opening or self._closing or self._deactivating then return false,I.error('reentrant')end
+            self._opening=true
+            local ok,opened,failure=pcall(function()
+                if not self._built then self:_build()end
+                -- Also recovers a hidden shell whose native OnHide was interrupted.
+                self:_deactivate()
+                if self:_menuOpen()then return false,I.error('build','Options menu could not be closed')end
+                if pageID then self._page=pageID end
+                local owner=app:Scope();self._view=owner
+                if not self.frame:IsShown()then self.frame:Show()end
+                if self._view~=owner or not self.frame:IsShown()then return false,I.error('build','Options hidden during opening')end
+                local refreshed,err=self:Refresh();if not refreshed then return false,err end
+                if self._view~=owner then return false,I.error('build','Options page changed during opening')end
+                owner:Watch(app:SelectAppearance(function(value)return value end),function()self:Refresh()end)
+                if self._view~=owner then return false,I.error('build','Initial appearance refresh failed')end
+                if app._settingsStore then owner:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self._profileError=nil;self:Refresh()end)end
+                if self._view~=owner then return false,I.error('build','Initial settings refresh failed')end
+                return true
+            end)
+            self._opening=nil
+            if not ok then failure=I.error('build',opened);opened=false end
+            if not opened then self:Close();return false,failure end
             return true
         end
-        function panel:Close() self._confirm=nil;self:_deactivate();if self.frame then self.frame:Hide() end;return true end
+        function panel:Open(pageID)
+            if not app._ready then return false,I.error('notReady')end
+            if pageID and not ids[pageID]then return false,I.error('unknownPage')end
+            if self._opening or self._closing or self._deactivating then return false,I.error('reentrant')end
+            if self:IsShown()and self._view and self._view.active then
+                if pageID then return self:SelectPage(pageID)end
+                return true
+            end
+            return self:_activate(pageID)
+        end
+        function panel:Close()
+            if self._closing or self._deactivating then return true end
+            self._closing=true
+            self:_deactivate()
+            local ok,err=true,nil
+            if self.frame then ok,err=pcall(self.frame.Hide,self.frame)end
+            self._closing=nil
+            if not ok then I.report(app,err);return false,I.error('build',err)end
+            return true
+        end
         function panel:IsShown() return self.frame~=nil and self.frame:IsShown() end
         function panel:Toggle() if self:IsShown() then return self:Close() else return self:Open() end end
         function panel:SelectPage(id)
-            if not ids[id] then return false,I.error('unknownPage') end
-            if not self:IsShown() then self._page=id;return true end
-            if self._page==id then return true end
-            self:Close();return self:Open(id)
+            if not ids[id]then return false,I.error('unknownPage')end
+            if self._opening or self._closing or self._deactivating then return false,I.error('reentrant')end
+            if not self:IsShown()then self._page=id;return true end
+            if self._page==id and self._view and self._view.active then return true end
+            return self:_activate(id)
         end
         app:OnReady(function()
             for _,event in ipairs({'UI_SCALE_CHANGED','DISPLAY_SIZE_CHANGED'})do
