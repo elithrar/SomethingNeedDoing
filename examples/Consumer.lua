@@ -44,6 +44,7 @@ local panel = app:Options({
         },
     }} }, profiles},
 })
+-- Missing Blizzard chat infrastructure returns unavailable; keep the normal Result check.
 local registered, err = app:Slash('/sndexample', function()
     local ok, failure = panel:Toggle()
     if not ok then app.log:Warn(failure.message) end

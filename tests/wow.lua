@@ -1,5 +1,7 @@
 -- Deliberately small native boundary fixture; not a rendering emulator.
 local W = {frames={}, errors={}, time=0, hooks=0}
+-- Blizzard creates the registry before addons register their own entries.
+SlashCmdList = {}
 local methods={}
 local function object(kind,parent)
     local f={kind=kind,parent=parent,scripts={},events={},shown=true,width=100,height=24,scale=1,left=0,bottom=0,text='',enabled=true}

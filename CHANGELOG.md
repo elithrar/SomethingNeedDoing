@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.2
+
+### Public API changes
+
+`app:Slash` calls and successful Results are unchanged. When Blizzard's command registry is missing, registration now returns `false, {code="unavailable", message=...}` instead of creating a replacement global. Keep the existing registration Result check; no migration is needed.
+
+### Internal improvements
+
+- Stop reassigning Blizzard's `SlashCmdList` global during registration. Even a same-value assignment can taint native chat dispatch and block protected commands such as `/pvp`.
+- Retain the native registry for registration and cancellation, touching only the add-on's entries.
+- Cover global-write rejection, readiness, cancellation and missing-registry recovery. Offline tests detect the unsafe write; final combat/taint behavior still requires the game client.
+
 ## 0.5.1
 
 ### Public API changes

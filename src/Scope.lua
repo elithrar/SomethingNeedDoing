@@ -115,17 +115,20 @@ SND._install[#SND._install + 1] = function(app)
     function app:Slash(command, callback)
         I.check(not self._disposed and type(command) == 'string' and command:match('^/[%w]+$') and type(callback) == 'function', 'invalid slash command')
         command = command:lower()
+        -- Blizzard owns this global. Even assigning the same table back taints
+        -- native chat dispatch; register only our entries in the existing table.
+        local commands = SlashCmdList
+        if type(commands) ~= 'table' then return false, I.error('unavailable', 'slash command registry unavailable') end
         for key, value in pairs(_G) do
             if type(key) == 'string' and key:match('^SLASH_.+%d+$') and type(value) == 'string' and value:lower() == command then return false, I.error('collision') end
         end
         local id = self.name:gsub('[^%w]', '_'):upper() .. '_SND_' .. command:sub(2):upper()
-        SlashCmdList = SlashCmdList or {}
-        if SlashCmdList[id] then return false, I.error('collision') end
+        if commands[id] then return false, I.error('collision') end
         _G['SLASH_' .. id .. '1'] = command
         local handler = function(text) if self._ready then I.call(self, callback, text) end end
-        SlashCmdList[id] = handler
+        commands[id] = handler
         local subscription = I.handle(self, function()
-            if SlashCmdList[id] == handler then SlashCmdList[id] = nil; _G['SLASH_' .. id .. '1'] = nil end
+            if commands[id] == handler then commands[id] = nil; _G['SLASH_' .. id .. '1'] = nil end
             callback = nil
         end)
         return true, subscription
