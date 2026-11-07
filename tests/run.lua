@@ -119,6 +119,38 @@ test('diagnostics and instance isolation','bounded logs and per-app ownership pr
     assert(a:Slash('/sndfixture',function()end));local h,e=b:Slash('/sndfixture',function()end);assert(not h and e.code=='collision')
     local late=0;a:OnReady(function()late=late+1 end);assert(late==0);W.tick(.1);assert(late==1)
 end)
+-- Blizzard imports this registry before dispatching native commands (including /pvp).
+-- Forever b401e0332adfbf0460d319b06d8ea29279a941f1: ChatFrameUtil.ImportAllListsToHash.
+-- Catch even same-value global assignments; ordinary Lua does not model WoW taint.
+test('slash registry ownership','registration and disposal must not reassign Blizzard globals',function()
+    local a=app();local registry=SlashCmdList;local received
+    setfenv(a.Slash,setmetatable({}, {__index=_G,__newindex=function(_,key)
+        error('unexpected global write: '..key)
+    end}))
+    local native=function()end;registry.PVP=native
+    local ok,handle=a:Slash('/registryfixture',function(text)received=text end)
+    assert(ok and SlashCmdList==registry and registry.PVP==native)
+    local id=a.name:upper()..'_SND_REGISTRYFIXTURE';local handler=registry[id]
+    handler('before readiness');assert(received==nil)
+    boot(a);handler('keep Case and spaces ');assert(received=='keep Case and spaces ')
+    handle:Cancel();assert(registry[id]==nil and _G['SLASH_'..id..'1']==nil)
+    assert(SlashCmdList==registry and registry.PVP==native)
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT');registry.PVP=nil
+end)
+
+test('slash registry unavailable','missing native infrastructure must not be synthesized or partially registered',function()
+    local a=app();local available=false;local registry=SlashCmdList
+    setfenv(a.Slash,setmetatable({}, {__index=function(_,key)
+        if key=='SlashCmdList' then if available then return registry end;return nil end
+        return _G[key]
+    end,__newindex=function(_,key)error('unexpected global write: '..key)end}))
+    local ok,err=a:Slash('/registryretry',function()end)
+    local id=a.name:upper()..'_SND_REGISTRYRETRY'
+    assert(not ok and err.code=='unavailable' and registry[id]==nil and _G['SLASH_'..id..'1']==nil)
+    available=true;local registered,handle=a:Slash('/registryretry',function()end)
+    assert(registered and registry[id]);handle:Cancel();a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
 test('Lua value and return boundaries','extra Lua returns and shared table aliases must not corrupt selector copying',function()
     local a=app();boot(a);local shared={x=1};local s=a:State({left=shared,right=shared})
     shared.x=9;assert(s:Read().left.x==1)

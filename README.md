@@ -71,6 +71,9 @@ end)
 if not registered then app.log:Warn(err.message) end
 ```
 
+Slash registration uses Blizzard's existing command registry. It returns an
+`unavailable` Result if that registry is missing; it never creates or replaces it.
+
 Settings restore after `ADDON_LOADED`; player and world readiness remain the
 add-on's responsibility. Existing databases need a
 [migration adapter](examples/SettingsAdapter.lua). The TOC determines whether
