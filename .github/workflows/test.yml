@@ -5,13 +5,50 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lua: [lua5.1, luajit]
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Lua 5.1
-        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Lua runtimes
+        run: sudo apt-get update && sudo apt-get install -y lua5.1 luajit
       - name: Check metadata and documentation
         run: python3 tools/check.py
       - name: Compile Lua sources
         run: find src tests examples -name '*.lua' -exec luac5.1 -p {} +
       - name: Run focused contracts
-        run: lua5.1 tests/run.lua
+        run: ${{ matrix.lua }} tests/run.lua
+  consumer-contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: SomethingNeedDoing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: SomethingNeedDoing
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: elithrar/XPIsland
+          ref: 875245207042318e063588c45ac6046860c95af3
+          path: XPIsland
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: elithrar/FindAnUpgrade
+          ref: c39437fc7545f4d8bc42869f983708ab8899d0b9
+          path: FindAnUpgrade
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: elithrar/AsTheCrowFlies
+          ref: f4f7adc7040fa9467e7df10996abd89f2ac0ed57
+          path: AsTheCrowFlies
+          persist-credentials: false
+      - name: Install Lua 5.1
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - name: Exercise pinned consumer domain modules
+        run: lua5.1 tests/consumers.lua

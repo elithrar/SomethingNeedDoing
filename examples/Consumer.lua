@@ -90,7 +90,10 @@ app:OnReady(function()
         preview:SetScale(value.scale);paint(value.tint)
     end)
     -- The color control's preview only repaints; acceptance commits through app:Set.
-    -- Reset/profile changes reach the same watcher. No cached mutable settings table.
+    -- Changed values reach this watcher; equal-value reset/copy still invalidate
+    -- editors and emit OnSettingsChanged. A custom mover would cancel its gesture
+    -- there based on change.reason, rather than relying on a value-only watcher.
+    -- No cached mutable settings table.
     owner:Watch(status:Select(function(value) return value.message end), function(message)
         app.log:Info(message)
     end)

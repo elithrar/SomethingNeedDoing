@@ -471,9 +471,11 @@ SND._install[#SND._install + 1] = function(app)
     end
     local function geometry(frame)
         if not safeFrame(frame) or not frame.GetLeft then return end
-        local ratio = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local scale, parentScale = frame:GetEffectiveScale(), UIParent:GetEffectiveScale()
+        if not V.Number(scale) or scale<=0 or not V.Number(parentScale) or parentScale<=0 then return end
+        local ratio = scale / parentScale
         local left, bottom, width, height = frame:GetLeft(), frame:GetBottom(), frame:GetWidth(), frame:GetHeight()
-        if not V.Number(left) or not V.Number(bottom) or not V.Number(ratio) or ratio<=0 then return end
+        if not V.Number(left) or not V.Number(bottom) or not V.Number(width) or width<=0 or not V.Number(height) or height<=0 or not V.Number(ratio) or ratio<=0 then return end
         return left*ratio, bottom*ratio, width*ratio, height*ratio, ratio
     end
     local function track(frame, anchor, spec)
@@ -483,25 +485,34 @@ SND._install[#SND._install + 1] = function(app)
         if not safeFrame(frame) or type(frame.GetLeft)~='function' or type(frame.SetPoint)~='function' or (anchor and (not safeFrame(anchor) or type(anchor.GetLeft)~='function')) then return false, I.error('unavailable') end
         local margin = spec.margin; if margin == nil then margin = 0 end
         if not V.Number(margin) or margin<0 then return false, I.error('invalid') end
-        local h, dragging = nil, false
+        local h, dragging, refreshing = nil, false, false
         local owner = app:Scope()
         h = I.handle(app, function() owner:Cancel() end)
         function h:Refresh()
-            if not self.active or dragging or (frame.IsShown and not frame:IsShown()) then return true end
-            if not safeFrame(frame) then return false, I.error('unavailable') end
-            local x,y,w,height,ratio = geometry(frame); if not x then return false,I.error('unavailable') end
-            local maxX,maxY = UIParent:GetWidth()-w-margin,UIParent:GetHeight()-height-margin
-            if anchor then
-                local ax,ay,aw,ah = geometry(anchor); if not ax then return false,I.error('unavailable') end
-                local function place(side) return side=='left' and ax-w-margin or ax+aw+margin end
-                x,y=place(spec.preferredSide or 'right'),ay+ah-height
-                if x<margin or x>maxX then x=place(spec.fallbackSide or 'left') end
-            end
-            local nx,ny=math.max(margin,math.min(maxX,x)),math.max(margin,math.min(maxY,y))
-            if anchor or nx~=x or ny~=y then
-                frame:ClearAllPoints();frame:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',nx/ratio,ny/ratio)
-            end
-            return true
+            if not self.active or dragging or refreshing then return true end
+            refreshing=true
+            local called,ok,err=pcall(function()
+                if not safeFrame(frame) then return false,I.error('unavailable') end
+                if frame.IsShown and not frame:IsShown() then return true end
+                local x,y,w,height,ratio = geometry(frame); if not x then return false,I.error('unavailable') end
+                local screenWidth,screenHeight=UIParent:GetWidth(),UIParent:GetHeight()
+                if not V.Number(screenWidth) or screenWidth<=0 or not V.Number(screenHeight) or screenHeight<=0 then return false,I.error('unavailable')end
+                local maxX,maxY = screenWidth-w-margin,screenHeight-height-margin
+                if anchor then
+                    local ax,ay,aw,ah = geometry(anchor); if not ax then return false,I.error('unavailable') end
+                    local function place(side) return side=='left' and ax-w-margin or ax+aw+margin end
+                    x,y=place(spec.preferredSide or 'right'),ay+ah-height
+                    if x<margin or x>maxX then x=place(spec.fallbackSide or 'left') end
+                end
+                local nx,ny=math.max(margin,math.min(maxX,x)),math.max(margin,math.min(maxY,y))
+                if anchor or nx~=x or ny~=y then
+                    frame:ClearAllPoints();frame:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',nx/ratio,ny/ratio)
+                end
+                return true
+            end)
+            refreshing=false
+            if not called then return false,I.error('unavailable',ok)end
+            return ok,err
         end
         local function attach(ok, err)
             if not ok then h:Cancel();return false,err end
@@ -512,6 +523,7 @@ SND._install[#SND._install + 1] = function(app)
             if not ok then return false,err end
         end
         local hooks={{frame,'OnShow',function() h:Refresh() end},
+            {frame,'OnHide',function() dragging=false end},
             {frame,'OnSizeChanged',function() h:Refresh() end},
             {frame,'OnDragStart',function() dragging=true end},
             {frame,'OnDragStop',function() dragging=false;h:Refresh() end}}

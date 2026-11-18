@@ -201,6 +201,15 @@ SND._install[#SND._install + 1] = function(app)
             if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu')end
             requireResource(app.fonts:Apply(panel._menuFont,'menu'))
             d:SetupMenu(function(_,root)
+                -- Native descriptions can outlive the profile/page that built
+                -- them. Reject their responders before they touch any owner.
+                local owner=panel._view
+                local revision=app._settingsStore and app._settingsStore._revision
+                local function choose(value)
+                    if not owner or not owner.active or panel._view~=owner or not panel:IsShown() then return end
+                    if app._settingsStore and app._settingsStore._revision~=revision then return end
+                    set(value)
+                end
                 root:SetScrollMode(240)
                 root:AddMenuReleasedCallback(function()
                     if panel._refreshPending and panel:IsShown() then
@@ -212,7 +221,7 @@ SND._install[#SND._install + 1] = function(app)
                 offered=I.copy(offered)
                 choices(offered)
                 for _, entry in ipairs(offered) do
-                    local row=root:CreateRadio(entry.label,function(value)return I.equal(get(),value)end,set,entry.value)
+                    local row=root:CreateRadio(entry.label,function(value)return I.equal(get(),value)end,choose,entry.value)
                     row:AddInitializer(function(native) if native.fontString then native.fontString:SetFontObject(panel._menuFont) end end)
                 end
             end)
@@ -499,7 +508,11 @@ SND._install[#SND._install + 1] = function(app)
                 if self._view~=owner then return false,I.error('build','Options page changed during opening')end
                 owner:Watch(app:SelectAppearance(function(value)return value end),function()self:Refresh()end)
                 if self._view~=owner then return false,I.error('build','Initial appearance refresh failed')end
-                if app._settingsStore then owner:Watch(app:SelectSettings(function(values,context)return{values=values,context=context}end),function()self._confirm=nil;self._profileError=nil;self:Refresh()end)end
+                if app._settingsStore then
+                    -- Equal-value profile replacement still dismisses confirmations.
+                    local subscription=app:OnSettingsChanged(function()self._confirm=nil;self._profileError=nil;self:Refresh()end)
+                    I.handle(owner,function()subscription:Cancel()end)
+                end
                 if self._view~=owner then return false,I.error('build','Initial settings refresh failed')end
                 return true
             end)

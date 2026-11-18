@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3
+
+### Public API changes
+
+Calls and schemas are unchanged; no migration is required. Before, an already-default `profiles:Reset()`, equal-value `CopyFrom()`, or same-profile `Switch()` could leave previews and gestures alive. After, every successful profile command advances the settings revision and emits `OnSettingsChanged`, even with empty `change.keys`. Use `change.reason` for gesture invalidation; `profileChanged` retains its identity/bind meaning. Equal-value `Set`/`SetMany` and value-only selectors remain deduplicated.
+
+`layout` handle `Refresh()` now returns `false, {code="unavailable", message=...}` for native failures or unresolved geometry instead of throwing. Check the existing Result and retry when geometry is available. `scope:Event()` now also returns `unavailable` when native registration returns false, without retaining a subscriber; the existing Result check remains valid.
+
+### Internal improvements
+
+- Reject dropdown responders from obsolete settings revisions or canceled pages, including profile menus.
+- Resume containment after hiding during a drag; guard reentrant placement and validate readable dimensions/scales before arithmetic or clearing anchors.
+- Add five regression contracts demonstrated failing before the fixes, and run all 34 contracts on Lua 5.1 and LuaJIT. Run commit-pinned consumer domain checks in CI.
+- Include the 0.5.2 fix preserving Blizzard's slash registry, previously available as a tag. Native rendering, input and combat/taint checks remain separate from offline evidence.
+
 ## 0.5.2
 
 ### Public API changes
