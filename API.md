@@ -109,7 +109,7 @@ local ok, err = app:Set("fontSize", 16)
 
 Fields may supply a display `label` for the generated options panel. Initial field types: `boolean`, finite `number`, finite `integer`, bounded `string`, `enum` with explicit values, `font` as a saved preference name, and RGB `color` with components in `[0,1]`. Dotted paths access nested settings; literal dots in field names are not supported initially. Reject invalid interactive input; legacy normalization/clamping belongs to the migration adapter. Missing fonts retain their requested preference while the renderer falls back.
 
-Change records contain `revision`, `reason` (`set`, `patch`, `switch`, `duplicate`, `copy`, `reset`, or `bind`), `keys` as a set of paths, and `profileChanged`. No-op writes emit nothing. Reentrant writes from listeners are rejected with `reentrant`; schedule intentional follow-up work explicitly (see section 3a). Options refreshes must not feed writes back into controls.
+Change records contain `revision`, `reason` (`set`, `patch`, `switch`, `duplicate`, `copy`, `reset`, or `bind`), `keys` as a set of paths, and `profileChanged`. Equal-value `Set`/`SetMany` writes emit nothing. Successful profile commands always advance the revision and notify, even when values and profile name are unchanged: they replace the editing lifetime. `keys` may be empty; `profileChanged` describes a changed active name or a character bind. Use `reason` to invalidate gestures on same-name reset/copy/switch. Reentrant writes from listeners are rejected with `reentrant`; schedule intentional follow-up work explicitly (see section 3a). Options refreshes must not feed writes back into controls.
 
 ### Persistence adapter contract
 
@@ -236,7 +236,7 @@ app.profiles:Reset()
 
 Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included in 0.4.1.
 
-Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, cancel stale drag/resize gestures, commit, and refresh. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. This replaces preview-then-rollback writes; the focused picker test covers native hide-before-accept and stale callbacks.
+Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, commit, and notify consumers to cancel their stale drag/resize gestures. This includes an already-default reset, equal-value copy, or switch to the active profile. Value-only selectors still notify only when their selection changes; use `OnSettingsChanged` for gesture ownership. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. Built-in dropdown responders also reject changed settings revisions and canceled page scopes; reopen a menu after an external settings change to make a fresh selection.
 
 A color control may supply a separate `preview(value)` repaint callback; cancellation sends the original value. `app:Get` and `OnSettingsChanged` remain committed-only. Consumers must not persist values from a preview callback. Editors snapshot the settings revision and reject an outdated commit if another write has replaced their starting state.
 
@@ -352,6 +352,8 @@ local placed, placement = app.layout:PlacePopup(menu, button, {
 
 Layout margins are UIParent logical units. Geometry calculations normalize effective scales before comparison; cursor pixels, local frame units, and UIParent units cannot be mixed. Screen awareness means usable UIParent bounds, including native notch handling, not hard-coded physical monitor dimensions. These helpers do not save placement, choose a dock side, show hidden frames, or override an OnDragStart/OnDragStop gesture. Consumers using custom movement scripts must avoid calling Refresh during movement. Handles support `Refresh()` and idempotent `Cancel()`.
 
+`handle:Refresh() -> ok, errorOrNil` returns `unavailable` for unresolved/restricted geometry or native failures. It validates scales and dimensions before arithmetic or clearing anchors; a later native anchor failure may leave partial geometry. Retry after the boundary recovers. Registration may succeed while the frame is hidden or unresolved; show/size/display events retry placement. Hiding ends the tracked drag lifetime, and nested refreshes are suppressed. Containment does not resize oversized consumer windows; their owner must provide fitting dimensions or responsive content.
+
 Only add-on-owned, non-forbidden, unprotected frames are accepted for automatic geometry changes. SND does not silently defer protected mutations or promise taint safety. Blizzard frame suppression, combat policy, and product-specific placement rules remain consumer-owned.
 
 Font application accepts native `SetFont` void returns when readback proves success. It handles missing media, late SharedMedia registration, fractional height readback, per-object rejection, and a final inherited native Font fallback. A family downgrade triggers a bounded remeasure pass across affected controls. Saved preferences remain unchanged. Font selection, probing, object creation, and text measurement do not belong in animation callbacks.
@@ -417,7 +419,7 @@ scope:Cancel()
 
 | API | Contract |
 | --- | --- |
-| `scope:Event(event, callback) -> ok, subscriptionOrError` | Callback receives native payload only, without an injected event name or self. Native registration is checked immediately; delivery begins only after readiness. |
+| `scope:Event(event, callback) -> ok, subscriptionOrError` | Callback receives native payload only, without an injected event name or self. Native registration is checked immediately; both exceptions and a false native result return `unavailable` without retaining a subscriber. Delivery begins only after readiness. |
 | `scope:PostHook(globalName, callback) -> ok, subscriptionOrError` | Observe a global function through `hooksecurefunc`; receives original arguments, not return values. |
 | `scope:PostHook(table, methodName, callback) -> ok, subscriptionOrError` | Equivalent table-method overload; original self remains in the native argument list. |
 | `scope:HookScript(frame, scriptName, callback) -> ok, subscriptionOrError` | Additive script observer; receives native frame and arguments. Never replace another owner's script. |
@@ -459,7 +461,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Verification and remaining integration gates
 
-The implementation is covered by [focused contract tests](tests/run.lua), each with an explicit failure-risk justification, and [three consumer mocks](tests/consumers.lua) against the real runtime. The consumer mocks additionally load original domain modules from the documented source baselines. They do not migrate the shipping add-ons.
+The implementation is covered by [focused contract tests](tests/run.lua), each with an explicit failure-risk justification, on Lua 5.1 and LuaJIT in CI. [Consumer checks](tests/consumers.lua) load domain modules from three commit-pinned sibling sources in CI. Those checks use fixture adapters/controllers and do not replace the shipping add-ons' complete suites or establish native UI compatibility.
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 

@@ -53,8 +53,8 @@ SND._install[#SND._install + 1] = function(app)
         end
         function scope:Event(event, callback)
             I.check(self.active and type(event) == 'string' and type(callback) == 'function', 'invalid event subscription')
-            local registered, err = pcall(app._frame.RegisterEvent, app._frame, event)
-            if not registered then return false, I.error('unavailable', err) end
+            local called, registered = pcall(app._frame.RegisterEvent, app._frame, event)
+            if not called or registered == false then return false, I.error('unavailable', registered) end
             local h
             h = I.handle(self, function()
                 app._pending[h] = nil; h._start = nil; h._callback = nil

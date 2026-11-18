@@ -1,8 +1,8 @@
 -- Optional sibling-source checks; no native client or complete consumer migration.
--- Domain baselines (these modules are unchanged in the SND migration PRs):
--- XPIsland f2b9dcdc4da2d8c07815934746622035ad6329f6
--- FindAnUpgrade 89fcaeca4d0b283cdb0de89775bbf3ad52c80b6d
--- AsTheCrowFlies 3d02ab66b5ff836d9215f09674e2a6c371982224
+-- Pinned CI domain baselines (complete consumer suites run in their repositories):
+-- XPIsland 875245207042318e063588c45ac6046860c95af3
+-- FindAnUpgrade c39437fc7545f4d8bc42869f983708ab8899d0b9
+-- AsTheCrowFlies f4f7adc7040fa9467e7df10996abd89f2ac0ed57
 -- Three real domain modules with mock controllers/UI, using the production SND runtime.
 local W=dofile('tests/wow.lua')
 local examples={};assert(loadfile('examples/SettingsAdapter.lua'))('Examples',examples)

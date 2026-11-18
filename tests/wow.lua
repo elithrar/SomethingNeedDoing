@@ -55,7 +55,7 @@ function methods:GetScript(name)return self.scripts[name]end
 function methods:HookScript(name,fn)
     local old=self.scripts[name];self.scripts[name]=function(...)if old then old(...)end;fn(...)end
 end
-function methods:RegisterEvent(event)self.events[event]=true end
+function methods:RegisterEvent(event)self.events[event]=true;return true end
 function methods:UnregisterEvent(event)self.events[event]=nil end
 function methods:UnregisterAllEvents()self.events={}end
 function methods:GetParent()return self.parent end
@@ -114,11 +114,12 @@ function methods:SetDefaultText(text)self.defaultText=text end
 function methods:IsMenuOpen()return self.menuOpen end
 function methods:OpenMenu()
     self.menuOpen=true
-    local root={}
+    local root={rows={}}
     function root:SetScrollMode()end
     function root:AddMenuReleasedCallback(fn)self.release=fn end
     function root:CreateRadio(label,selected,choose,value)
-        local row={};function row:AddInitializer(fn)fn({fontString=object('FontString')})end;return row
+        local row={choose=choose,value=value,selected=selected};self.rows[#self.rows+1]=row
+        function row:AddInitializer(fn)fn({fontString=object('FontString')})end;return row
     end
     self.root=root;self.buildMenu(self,root)
 end

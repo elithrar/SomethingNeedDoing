@@ -181,7 +181,10 @@ SND._install[#SND._install + 1] = function(app)
         end)
         if not ok then return false, I.error('invalid', candidate) end
         if not candidate then return false, I.error('rejected', failure) end
-        if I.equal(current, candidate.state) then return true end
+        -- Profile commands replace the editing lifetime even when their values
+        -- are equal. Consumers use this notification to invalidate gestures.
+        local replacing = operation.kind ~= 'set' and operation.kind ~= 'patch'
+        if not replacing and I.equal(current, candidate.state) then return true end
         local keys = {}
         for path in pairs(spec.fields) do if not I.equal(I.get(current.values,path), I.get(candidate.state.values,path)) then keys[path] = true end end
         local profileChanged = current.activeProfile ~= candidate.state.activeProfile or operation.kind == 'bind'

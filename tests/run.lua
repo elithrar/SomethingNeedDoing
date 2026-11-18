@@ -638,4 +638,91 @@ test('options navigation and cleanup recovery','tabs replace the page without hi
     panel.frame.Show=show;assert(panel:Open());assert(panel._view.active)
 end)
 
+test('equal-value profile replacement','reset/copy/switch must invalidate previews and consumer gestures even without changed fields',function()
+    local a=app(function(name)return {savedVariables={name..'DB'},fields={color={type='color',default={1,1,1}}}}end)
+    local preview;local p=a:Options({pages={{id='color',sections={{controls={{type='color',key='color',preview=function(v)preview=v end}}}}},{id='profiles',_profiles=true}}})
+    boot(a);assert(p:Open());assert(a.profiles:Duplicate('Same'))
+    local changes=0
+    local listener=a:OnSettingsChanged(function(_,change)
+        changes=changes+1;assert(not next(change.keys));assert(change.reason~='set' and change.reason~='patch')
+    end)
+    for _,replace in ipairs({function()return a.profiles:Reset()end,function()return a.profiles:CopyFrom('Default')end,function()return a.profiles:Switch('Same')end})do
+        assert(W.click(p._pool['color:1:1']));local stale=ColorPickerFrame.info.swatchFunc
+        local _,revision=a._settingsStore:Read()
+        W.color(.2,.3,.4);assert(preview[1]==.2 and a:Get('color')[1]==1)
+        assert(replace());assert(preview[1]==1 and not ColorPickerFrame:IsShown())
+        stale();assert(a:Get('color')[1]==1)
+        local ok,err=a:Set('color',{.2,.3,.4},revision);assert(not ok and err.code=='stale')
+    end
+    assert(changes==3)
+    assert(a:Set('color',{1,1,1}));assert(a:SetMany({color={1,1,1}}));assert(changes==3)
+    listener:Cancel()
+    assert(W.click(p._pool['color:1:1']));W.color(.4,.5,.6)
+    assert(not a.profiles:CopyFrom('Missing'));assert(ColorPickerFrame:IsShown() and preview[1]==.4)
+    W.color(.4,.5,.6,true);assert(a:Get('color')[1]==.4)
+    assert(a.profiles:Reset());assert(p:Open('profiles'));assert(W.click(p._pool['profile-reset']))
+    assert(p._confirm and p._pool['profile-confirm']:IsShown())
+    assert(a.profiles:Reset());assert(not p._confirm and not p._pool['profile-confirm']:IsShown())
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
+test('dropdown callback identity','native selections retained across profile changes or page reuse cannot edit the new owner',function()
+    local a=app(function(name)return {savedVariables={name..'DB'},fields={choice={type='enum',default='a',values={'a','b'}},enabled={type='boolean',default=true}}}end)
+    local p=a:Options();boot(a);assert(p:Open())
+    local d=p._menus['settings:1:1']
+    local function selectB()d:OpenMenu();local row=d.root.rows[2];return function()row.choose(row.value)end end
+    local stale=selectB();assert(a.profiles:Duplicate('Other'));stale();assert(a:Get('choice')=='a')
+    stale=selectB();assert(a:Set('enabled',false));stale();assert(a:Get('choice')=='a')
+    d:CloseMenu();W.tick(.01)
+    stale=selectB();p:Close();assert(p:Open());stale();assert(a:Get('choice')=='a')
+    local current=selectB();current();d:CloseMenu();W.tick(.01);assert(a:Get('choice')=='b')
+    assert(p:Open('profiles'));local menu=p._menus['profile-select'];menu:OpenMenu()
+    local row=menu.root.rows[1];assert(a.profiles:Reset());row.choose(row.value)
+    assert(a.profiles:Active()=='Other')
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
+-- Forever 70338 SimpleFrame:RegisterEvent returns a boolean, not just an exception.
+test('native event refusal','a false registration result must not publish a subscription or prevent a later retry',function()
+    local a=app();boot(a);local owner=a:Scope();local register=a._frame.RegisterEvent
+    a._frame.RegisterEvent=function()return false end
+    local ok,err=owner:Event('PLAYER_ENTERING_WORLD',function()end)
+    assert(not ok and err.code=='unavailable' and not next(owner._handles))
+    a._frame.RegisterEvent=register;local calls=0
+    local accepted,handle=owner:Event('PLAYER_ENTERING_WORLD',function()calls=calls+1 end)
+    assert(accepted);W.event('PLAYER_ENTERING_WORLD');assert(calls==1)
+    handle:Cancel();assert(not a._frame.events.PLAYER_ENTERING_WORLD)
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
+test('hidden drag recovery','hiding during a drag must not suspend containment for the next window lifetime',function()
+    local a=app();boot(a);local frame=CreateFrame('Frame',nil,UIParent);frame:SetSize(100,100)
+    local ok,handle=a.layout:KeepOnScreen(frame,{margin=10});assert(ok)
+    frame.scripts.OnDragStart(frame);frame.left=1500;assert(handle:Refresh());assert(frame.left==1500)
+    frame:Hide();frame:Show();assert(frame.left==1170)
+    frame.scripts.OnDragStart(frame);frame.left=-20;frame.scripts.OnDragStop(frame);assert(frame.left==10)
+    handle:Cancel();a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
+-- Forever 70338 geometry methods can return nothing or restricted values. The
+-- fixture detects inspection before guards; it does not emulate native secrets.
+test('layout failure and unresolved geometry','unavailable geometry preserves anchors; native failures return Results and leave refresh retryable',function()
+    local a=app();boot(a);local f=CreateFrame('Frame',nil,UIParent);f:SetSize(100,100)
+    f:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',10,10)
+    local ok,h=a.layout:KeepOnScreen(f);assert(ok)
+    local points=f.points;local getWidth=f.GetWidth;f.GetWidth=function()return nil end
+    local placed,err=h:Refresh();assert(not placed and err.code=='unavailable' and f.points==points)
+    f.GetWidth=getWidth;local getScale=f.GetEffectiveScale
+    local secret=setmetatable({}, {__div=function()error('inspected secret')end});local previous=issecretvalue
+    issecretvalue=function(value)return value==secret end;f.GetEffectiveScale=function()return secret end
+    placed,err=h:Refresh();assert(not placed and err.code=='unavailable' and f.points==points)
+    f.GetEffectiveScale=getScale;issecretvalue=previous
+    local setPoint=f.SetPoint;f.left=1500;f.SetPoint=function()error('native anchor failed')end
+    local called;called,placed,err=pcall(h.Refresh,h);assert(called and not placed and err.code=='unavailable')
+    f.SetPoint=function(self,...)assert(h:Refresh());return setPoint(self,...)end
+    assert(h:Refresh());assert(f.left==1180)
+    h:Cancel();assert(not a._frame.events.DISPLAY_SIZE_CHANGED)
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
 print('PASS '..total..' focused tests')

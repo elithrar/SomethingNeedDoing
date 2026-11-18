@@ -79,6 +79,11 @@ add-on's responsibility. Existing databases need a
 [migration adapter](examples/SettingsAdapter.lua). The TOC determines whether
 saved profiles are account-wide or per-character.
 
+Successful profile commands invalidate old edits even if their values are
+unchanged. Custom movers should use `OnSettingsChanged` and the operation
+`reason` to cancel gestures on reset/copy/switch; value-only watchers remain
+deduplicated. Built-in menus and color editors reject stale callbacks.
+
 ### Appearance
 
 Modern and WoW Forever themes apply across owned UI surfaces. Register frames,
@@ -141,6 +146,12 @@ With Lua 5.1 and Python 3 installed, run from the SND directory:
 python3 tools/check.py
 lua5.1 tests/run.lua
 ```
+
+CI runs the contracts on both Lua 5.1 and LuaJIT, plus consumer domain checks
+against pinned XPIsland, FindAnUpgrade and AsTheCrowFlies revisions. With those
+repositories checked out as siblings, run `lua5.1 tests/consumers.lua` locally.
+These are offline logic/lifecycle checks; native rendering, input, combat/taint
+and in-game performance still need the Forever client.
 
 ## Contributing
 
