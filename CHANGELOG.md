@@ -8,6 +8,7 @@ A scoped subscriber now reuses an event already registered on the app frame. Pre
 
 ### Internal improvements
 
+- A refused bootstrap or logout registration reports the event and releases the partial registration so creation can be retried.
 - Exercise shared subscriptions and app lifecycle events with a frame that refuses duplicate registrations.
 
 ## 0.5.3

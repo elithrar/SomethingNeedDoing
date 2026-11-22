@@ -121,9 +121,14 @@ function SND:NewAddon(name, spec)
     I.check(not spec or spec.version==nil or type(spec.version)=='string', 'version must be a string')
     I.check(CreateFrame, 'SND requires WoW frame APIs')
     local app = { name = name, version = (spec or {}).version, _pending = {}, _scopes = {}, _handles = {}, _order = 0, _stores = {} }
-    apps[name] = app
     local frame = CreateFrame('Frame'); app._frame = frame
-    frame:RegisterEvent('ADDON_LOADED'); frame:RegisterEvent('PLAYER_LOGOUT')
+    for _, event in ipairs({ 'ADDON_LOADED', 'PLAYER_LOGOUT' }) do
+        local ok, registered = pcall(frame.RegisterEvent, frame, event)
+        if not ok or registered == false then
+            frame:UnregisterAllEvents()
+            error('SND: could not register ' .. event)
+        end
+    end
     function app:IsReady() return self._ready == true end
     function app:OnReady(callback)
         I.check(type(callback) == 'function' and not self._disposed, 'invalid ready callback')
@@ -174,5 +179,6 @@ function SND:NewAddon(name, spec)
     end)
     for _, install in ipairs(self._install) do install(app) end
     app._system = app:Scope('_snd')
+    apps[name] = app
     return app
 end
