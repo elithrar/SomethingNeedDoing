@@ -55,7 +55,12 @@ function methods:GetScript(name)return self.scripts[name]end
 function methods:HookScript(name,fn)
     local old=self.scripts[name];self.scripts[name]=function(...)if old then old(...)end;fn(...)end
 end
-function methods:RegisterEvent(event)self.events[event]=true;return true end
+function methods:IsEventRegistered(event) return self.events[event] == true end
+function methods:RegisterEvent(event)
+    if self:IsEventRegistered(event) then return false end
+    self.events[event] = true
+    return true
+end
 function methods:UnregisterEvent(event)self.events[event]=nil end
 function methods:UnregisterAllEvents()self.events={}end
 function methods:GetParent()return self.parent end

@@ -53,7 +53,11 @@ SND._install[#SND._install + 1] = function(app)
         end
         function scope:Event(event, callback)
             I.check(self.active and type(event) == 'string' and type(callback) == 'function', 'invalid event subscription')
-            local called, registered = pcall(app._frame.RegisterEvent, app._frame, event)
+            -- The app frame already listens for boot and logout. Multiple scopes
+            -- can also subscribe to the same native event.
+            local called, registered = pcall(function()
+                return app._frame:IsEventRegistered(event) or app._frame:RegisterEvent(event)
+            end)
             if not called or registered == false then return false, I.error('unavailable', registered) end
             local h
             h = I.handle(self, function()

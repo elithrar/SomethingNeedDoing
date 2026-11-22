@@ -20,6 +20,24 @@ local function basic(name)
 end
 local function boot(a)W.event('ADDON_LOADED',a.name)end
 
+test('lifecycle registration failure','a failed bootstrap releases the frame and permits retry with the same name',function()
+    local sdk=W.load('BootRetry')
+    local create, failedFrame = CreateFrame
+    CreateFrame=function(...)
+        failedFrame=create(...)
+        local register=failedFrame.RegisterEvent
+        function failedFrame:RegisterEvent(event)
+            if event=='PLAYER_LOGOUT' then return false end
+            return register(self,event)
+        end
+        return failedFrame
+    end
+    local ok,err=pcall(sdk.NewAddon,sdk,'BootRetry')
+    CreateFrame=create
+    assert(not ok and tostring(err):find('PLAYER_LOGOUT',1,true) and not next(failedFrame.events))
+    local a=sdk:NewAddon('BootRetry');boot(a);assert(a:IsReady())
+end)
+
 test('state transactions','prevents partial publication, escaped drafts and notification write loops',function()
     local a=app();local s=a:State({n=0},{validate=function(v)return v.n>=0 end});local paints=0
     local view=a:Scope();view:Watch(s:Select(function(v)return{n=v.n}end),function()paints=paints+1;local ok,e=s:Update(function(v)v.n=2 end);assert(not ok and e.code=='reentrant')end)
