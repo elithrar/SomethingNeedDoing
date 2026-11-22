@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+### Public API changes
+
+A scoped subscriber now reuses an event already registered on the app frame. Previously, a client that refused repeat registration could reject the subscription. Existing callers need no migration.
+
+### Internal improvements
+
+- Exercise shared subscriptions and app lifecycle events with a frame that refuses duplicate registrations.
+
 ## 0.5.3
 
 ### Public API changes

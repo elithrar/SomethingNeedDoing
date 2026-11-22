@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.5.3
+# SomethingNeedDoing API — 0.5.4
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on Lua 5.1 and LuaJIT, with pinned consumer-domain checks; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -419,7 +419,7 @@ scope:Cancel()
 
 | API | Contract |
 | --- | --- |
-| `scope:Event(event, callback) -> ok, subscriptionOrError` | Callback receives native payload only, without an injected event name or self. Native registration is checked immediately; both exceptions and a false native result return `unavailable` without retaining a subscriber. Delivery begins only after readiness. |
+| `scope:Event(event, callback) -> ok, subscriptionOrError` | Callback receives native payload only, without an injected event name or self. An existing frame registration is reused. When a new registration is needed, both exceptions and a false native result return `unavailable` without retaining a subscriber. Delivery begins only after readiness. |
 | `scope:PostHook(globalName, callback) -> ok, subscriptionOrError` | Observe a global function through `hooksecurefunc`; receives original arguments, not return values. |
 | `scope:PostHook(table, methodName, callback) -> ok, subscriptionOrError` | Equivalent table-method overload; original self remains in the native argument list. |
 | `scope:HookScript(frame, scriptName, callback) -> ok, subscriptionOrError` | Additive script observer; receives native frame and arguments. Never replace another owner's script. |
