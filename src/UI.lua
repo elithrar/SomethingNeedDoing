@@ -361,12 +361,18 @@ SND._install[#SND._install + 1] = function(app)
         if options==nil then options={}end
         I.check(I.plain(options) and (options.size==nil or (V.Number(options.size) and options.size>0)) and (options.flags==nil or type(options.flags)=='string'),'invalid font options')
         startFonts()
-        local entry=applications[object] or {};applications[object]=entry
+        local entry=applications[object] or {}
+        local previousRole,previousOptions=entry.role,entry.options
         entry.role,entry.options=role,I.copy(options)
         local before=generation
         local ran,ok,err=pcall(apply,object,entry)
         if not ran then ok,err=false,I.error('unavailable',ok)end
-        if not ok then applications[object]=nil end
+        if ok then
+            applications[object]=entry
+            entry.refreshFailed=nil
+        else
+            entry.role,entry.options=previousRole,previousOptions
+        end
         if generation~=before and not refreshing then refreshFonts(false) end
         return ok,err
     end
@@ -388,7 +394,16 @@ SND._install[#SND._install + 1] = function(app)
         media=getMedia()
         for _=1,3 do
             local before=generation
-            for object,role in pairs(applications)do local ok,applied,err=pcall(apply,object,role);if not ok then applications[object]=nil;I.report(app,applied)elseif not applied then applications[object]=nil;I.report(app,err)end end
+            for object,entry in pairs(applications)do
+                local ok,applied,err=pcall(apply,object,entry)
+                if ok and applied then
+                    entry.refreshFailed=nil
+                elseif not entry.refreshFailed then
+                    -- Keep the binding for the next refresh and report once per failure.
+                    entry.refreshFailed=true
+                    I.report(app,ok and err or applied)
+                end
+            end
             if before==generation then break end
         end
         refreshing = nil

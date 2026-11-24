@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.9
+
+### Public API changes
+
+Custom controls now release their subscriptions when their visibility predicate hides them. Previously those subscriptions could last until the page closed. Showing the control again calls its factory with the same parent and a fresh component scope. Existing factories can keep their signatures and rebind callbacks to the scope they receive.
+
+### Internal improvements
+
+- Keep literal page and control IDs distinct from the IDs of generated tabs and fields, including when IDs contain colons or percent signs.
+- Restore the committed slider position when the settings adapter rejects a drag.
+- Retain registered font roles through a transient native font error so the next refresh can recover.
+- Reuse the Modern close button and finish its setup when the options window opens again after a construction error.
+
 ## 0.5.8
 
 ### Public API changes

@@ -1,5 +1,11 @@
 local _, ns = ...
 local SND = ns.SomethingNeedDoing; local I = SND._
+-- Colons separate the parts of a pooled widget key (e.g. the value
+-- editor of a slider). A colon in an add-on's own ID is literal.
+local escapes = {[':']='%3A',['%']='%25'}
+local function keyPart(id)
+    return (id:gsub('[:%%]',escapes))
+end
 function SND.Pages.Profiles() return { id='profiles', label='Profiles', _profiles=true } end
 SND._install[#SND._install + 1] = function(app)
     function app:Options(spec)
@@ -32,9 +38,12 @@ SND._install[#SND._install + 1] = function(app)
         for _,page in ipairs(spec.pages)do
             I.check(I.plain(page) and type(page.id)=='string' and page.id~='' and not pageIDs[page.id], 'invalid or duplicate page id')
             pageIDs[page.id]=true
+            local pagePrefix=keyPart(page.id)..':'
+            page._tabKey=':tab:'..page.id
             I.array(page.sections==nil and {} or page.sections, 'sections')
-            for _,section in ipairs(page.sections or {})do
+            for si,section in ipairs(page.sections or {})do
                 I.check(I.plain(section),'section must be a plain table')
+                section._titleKey=pagePrefix..'section:'..si
                 section.layout=I.formLayout(section.layout,spec.layout)
                 I.array(section.controls==nil and {} or section.controls,'controls')
                 local controlIDs={}
@@ -42,6 +51,7 @@ SND._install[#SND._install + 1] = function(app)
                     I.check(I.plain(c) and ({checkbox=true,slider=true,number=true,text=true,select=true,font=true,color=true,button=true,description=true,custom=true})[c.type], 'invalid control type')
                     I.check(c.id==nil or (type(c.id)=='string' and c.id~=''), 'control id must be a nonempty string')
                     local id=c.id or tostring(index);I.check(not controlIDs[id],'duplicate control id');controlIDs[id]=true
+                    c._poolKey=pagePrefix..si..':'..keyPart(id)
                     for _,key in ipairs({'enabled','visible','preview','action','create'})do I.check(c[key]==nil or type(c[key])=='function', key..' must be a function')end
                     if c.type=='custom' then I.check(type(c.create)=='function','custom requires create')
                     elseif c.type=='button' then I.check(type(c.action)=='function','button requires action')
@@ -95,6 +105,7 @@ SND._install[#SND._install + 1] = function(app)
             local b=ownedControl(id,parent,'button');b:SetSize(math.min(230,math.max(1,parent:GetWidth())),26)
             b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);fitButton(b);return b
         end
+        local textClose
         local function refreshClose()
             local shell = panel.frame
             local close
@@ -106,11 +117,14 @@ SND._install[#SND._install + 1] = function(app)
                     shell.onCloseCallback = function() panel:Close(); return false end
                 end
             else
-                close = panel._pool.textClose
-                if not close then
+                if not textClose then
+                    -- The native frame and label enter their pools before all
+                    -- setters succeed. Retry setup on those objects after failure.
                     close = button('textClose',shell,'×',function() panel:Close() end)
                     close:SetWidth(26);close:SetPoint('TOPRIGHT',-10,-10)
+                    textClose = close
                 end
+                close = textClose
                 fitButton(close)
             end
             local previous = panel._pool.close
@@ -157,10 +171,8 @@ SND._install[#SND._install + 1] = function(app)
             -- Detach the lifetime before native cleanup or consumer callbacks.
             -- A failure/reentrant hide must not strand a registered page scope.
             local view=self._view;self._view=nil
-            local components=self._components;self._components={}
             if view then view:Cancel()end
             self:_cancelEditors()
-            for _,component in pairs(components)do I.call(app,component.Hide,component)end
             self._deactivating=nil
         end
         local function color(control)
@@ -313,15 +325,34 @@ SND._install[#SND._install + 1] = function(app)
         end
         local function customComponent(id,parent,specification,width)
             local container=frame(id,'Frame',parent)
+            local view=panel._view
+            if not view or not view.active then return container,0 end
             container:SetWidth(width);container:Show()
-            local component=panel._components[id]
-            if not component then
-                component=specification.create(container,app,panel._view)
+            if not view.active then return container,0 end
+            local lifetime=panel._components[id]
+            if not lifetime then
+                local scope=app:Scope()
+                lifetime=I.handle(view,function()
+                    panel._components[id]=nil
+                    scope:Cancel()
+                    if lifetime.component then I.call(app,lifetime.component.Hide,lifetime.component) end
+                    container:Hide()
+                end)
+                -- Own the scope before running consumer code so partial setup is
+                -- canceled even if the factory raises or closes the page itself.
+                panel._components[id]=lifetime
+                local component=specification.create(container,app,scope)
                 I.check(component and type(component.Refresh)=='function' and type(component.Layout)=='function'
                     and type(component.Hide)=='function','invalid custom component')
-                panel._components[id]=component
+                if not lifetime.active then
+                    I.call(app,component.Hide,component)
+                    return container,0
+                end
+                lifetime.component=component
             end
+            local component=lifetime.component
             component:Refresh()
+            if not lifetime.active then return container,0 end
             local height=component:Layout(width)
             I.check(SND.Values.Number(height) and height>=0,'custom layout must return a finite nonnegative height')
             container:SetHeight(height)
@@ -331,7 +362,14 @@ SND._install[#SND._install + 1] = function(app)
             local kind=c.type;local widget,label,group,entry
             local field=c.key and app._settingsFields and app._settingsFields[c.key]
             if c.key then I.check(field,'control binds unknown field: '..c.key) end
-            local function write(value) if not panel._refreshing then report(app:Set(c.key,value)) end end
+            local function write(value)
+                if panel._refreshing then return end
+                local ok,err=app:Set(c.key,value)
+                report(ok,err)
+                -- A rejected write sends no settings notification. Restore the
+                -- thumb that the native slider already moved during this gesture.
+                if not ok and kind=='slider' then panel:Refresh() end
+            end
             if kind=='custom' then
                 return customComponent(id,parent,c,width)
             elseif kind=='description' then
@@ -414,7 +452,7 @@ SND._install[#SND._install + 1] = function(app)
             end)
             scroll:EnableMouseWheel(true);scroll:SetScript('OnMouseWheel',function(_,delta)bar:SetValue(math.max(0,math.min(self._maximum or 0,(self._offsets[self._page] or 0)-delta*30)))end)
             for i,page in ipairs(tabs) do
-                local b=button('tab:'..page.id,f,page.label or page.id,function()report(self:SelectPage(page.id))end)
+                local b=button(page._tabKey,f,page.label or page.id,function()report(self:SelectPage(page.id))end)
                 local tabWidth=((spec.width or 640)-32-(#self._pages-1)*4)/#self._pages
                 b:SetSize(tabWidth,26);b:SetPoint('TOPLEFT',16+(i-1)*(tabWidth+4),-50)
                 if not b._selected then
@@ -513,12 +551,12 @@ SND._install[#SND._install + 1] = function(app)
             if page._profiles then y=self:_profiles()+12 end
             for si,section in ipairs(page.sections or {}) do
                 if section.title then
-                    local label=text(page.id..':section:'..si,self.body,section.title,'heading');label:ClearAllPoints();label:SetWidth(width);label:SetWordWrap(true);label:SetPoint('TOPLEFT',0,-y);y=y+label:GetStringHeight()+10
+                    local label=text(section._titleKey,self.body,section.title,'heading');label:ClearAllPoints();label:SetWidth(width);label:SetWordWrap(true);label:SetPoint('TOPLEFT',0,-y);y=y+label:GetStringHeight()+10
                 end
                 local columns,columnWidth=app.layout:Columns(width,section.layout)
                 local column,rowHeight=0,0
-                for ci,c in ipairs(section.controls or {}) do
-                    local id=page.id..':'..si..':'..(c.id or ci)
+                for _,c in ipairs(section.controls or {}) do
+                    local id=c._poolKey
                     if not c.visible or c.visible(app) then
                         local widget,height,label=control(id,self.body,c,columnWidth,section.layout)
                         local x=column*(columnWidth+section.layout.columnGap)
@@ -538,7 +576,7 @@ SND._install[#SND._install + 1] = function(app)
                         end
                         rowHeight=math.max(rowHeight,height);column=column+1
                         if column==columns then y=y+rowHeight;column,rowHeight=0,0 end
-                    elseif self._components[id] then self._components[id]:Hide() end
+                    elseif self._components[id] then self._components[id]:Cancel() end
                 end
                 y=y+rowHeight
                 if si<#page.sections then y=y+12 end
@@ -591,12 +629,12 @@ SND._install[#SND._install + 1] = function(app)
                 local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.max(1,math.min(4,#tabs)),minColumnWidth=110,columnGap=4})
                 local rowHeight=0
                 for index,p in ipairs(tabs)do
-                    local b=self._pool['tab:'..p.id];b:SetWidth(tabWidth);fitButton(b)
+                    local b=self._pool[p._tabKey];b:SetWidth(tabWidth);fitButton(b)
                     rowHeight=math.max(rowHeight,b:GetHeight())
                     if index%count==0 or index==#self._pages then
                         local first=index-((index-1)%count)
                         for j=first,index do
-                            local tab=self._pool['tab:'..self._pages[j].id];tab:SetHeight(rowHeight)
+                            local tab=self._pool[self._pages[j]._tabKey];tab:SetHeight(rowHeight)
                             tab:ClearAllPoints();tab:SetPoint('TOPLEFT',16+(j-first)*(tabWidth+4),-tabY)
                         end
                         tabY=tabY+rowHeight+4;rowHeight=0
@@ -622,7 +660,7 @@ SND._install[#SND._install + 1] = function(app)
                     y=self:_layoutPage(page,width-16)
                 end
                 for _,p in ipairs(tabs)do
-                    local b=self._pool['tab:'..p.id];b._selected:SetShown(p.id==self._page)
+                    local b=self._pool[p._tabKey];b._selected:SetShown(p.id==self._page)
                     requireResource(app.ui:Color(b.text,p.id==self._page and 'accent' or 'muted'))
                 end
                 self.body:SetHeight(math.max(1,y));self._maximum=math.max(0,y-viewportHeight)

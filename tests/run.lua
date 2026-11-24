@@ -482,6 +482,26 @@ test('generated options and settled font layout','default panels must bind valid
     for _,name in ipairs(UISpecialFrames)do assert(name~=frameName)end
 end)
 
+test('registered font recovers on refresh','a transient read failure must preserve the last successful binding for a live label',function()
+    local a=app(basic);boot(a)
+    local bar=UIParent:CreateFontString()
+    local preview=UIParent:CreateFontString()
+    assert(a.fonts:Apply(bar,'body',{size=18,flags='THICKOUTLINE'}))
+    assert(a.fonts:Apply(preview,'body',{size=12}))
+    local read=bar.GetFont
+    bar.GetFont=function()error('temporarily unreadable font')end
+    assert(a:Set('font','Arial'))
+    assert(preview.font=='Fonts\\ARIALN.TTF' and bar.font~=preview.font)
+    local ok,err=a.fonts:Apply(bar,'control',{size=9})
+    assert(not ok and err.code=='unavailable')
+    a.fonts:Refresh()
+    local entries=a.log:Entries()
+    assert(#entries==1 and entries[1].count==1)
+    bar.GetFont=read
+    a.fonts:Refresh()
+    assert(bar.font==preview.font and bar.fontSize==18.25 and bar.flags=='THICKOUTLINE')
+end)
+
 test('font family retry and native read failures','both consumers require regular text to survive bold rejection and recover together after a transient per-object failure',function()
     local lib={List=function()return {'Family'}end,Fetch=function(_,_,name)if name=='New' then return 'New.ttf' elseif name=='Family' then return 'Family.ttf' elseif name=='Family Bold' then return 'Bold.ttf' end end}
     LibStub=function()return lib end
@@ -520,13 +540,45 @@ test('compact options presentation','aligned fields, disabled feedback and selec
     local menu=panel._pool['settings:1:font'];local label=panel._texts['settings:1:font:label']
     assert(menu.points[2]==panel.body:GetWidth()-menu:GetWidth() and label.points[2]==0,'field and label use separate columns')
     assert(not panel._texts['settings:section:1'],'untitled sections must not consume an empty heading row')
-    assert(panel._pool['tab:settings']._selected:IsShown() and not panel._pool['tab:profiles']._selected:IsShown())
+    assert(panel._pool[':tab:settings']._selected:IsShown() and not panel._pool[':tab:profiles']._selected:IsShown())
     assert(a:Set('enabled',false));assert(menu.alpha==.45 and not menu.enabled)
     assert(a:Set('enabled',true));assert(menu.alpha==1 and menu.enabled)
     assert(panel.bar.template=='BackdropTemplate' and panel.bar.thumb==panel.bar._thumb)
     assert(panel:SelectPage('profiles'));assert(panel._pool['profiles:1:extra']:IsShown())
-    assert(panel._pool['tab:profiles']._selected:IsShown() and not panel._pool['tab:settings']._selected:IsShown())
+    assert(panel._pool[':tab:profiles']._selected:IsShown() and not panel._pool[':tab:settings']._selected:IsShown())
     local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
+end)
+
+test('rejected slider write','an adapter rejection restores the moved thumb before returning to the player',function()
+    local attempts=0
+    local a=app(function(name)
+        local declaration=basic(name)
+        local prepare=declaration.adapter.Prepare
+        function declaration.adapter:Prepare(state,operation,fields)
+            attempts=attempts+1
+            if operation.kind=='set' and operation.path=='scale' and operation.value==1.5 then
+                return false,{code='rejected',message='Unavailable at this scale'}
+            end
+            return prepare(self,state,operation,fields)
+        end
+        return declaration
+    end)
+    local panel=a:Options({pages={{id='display',sections={{controls={
+        {type='slider',id='size',key='scale',label='Size',step=.1,editable=true},
+        {type='slider',id='scale',key='scale',label='Scale',step=.1,format='percent'},
+    }}}}}})
+    boot(a);assert(panel:Open())
+    local editable,plain=panel._pool['display:1:size'],panel._pool['display:1:scale']
+    local entry,label=panel._pool['display:1:size:value'],panel._texts['display:1:scale:value']
+    for _,slider in ipairs({editable,plain}) do
+        slider:SetValue(1.5)
+        assert(slider:GetValue()==1 and entry:GetText()=='1' and label:GetText()=='100%')
+        assert(a:Get('scale')==1 and _G[a.name..'DB'].values.scale==1)
+    end
+    assert(attempts==2,'restoring native positions cannot submit another write')
+    editable:SetValue(1.2)
+    assert(attempts==3 and a:Get('scale')==1.2 and plain:GetValue()==1.2 and label:GetText()=='120%')
+    panel:Close()
 end)
 
 test('editable slider','typing and dragging share one value while unfinished or invalid input cannot escape its settings view',function()
@@ -604,7 +656,7 @@ test('single-page settings shell','a single page recovers its navigation space a
     }}}}
     local panel=a:Options({title='Settings',width=520,height=240,pages={page}})
     boot(a);assert(panel:Open())
-    assert(not panel._pool['tab:display'],'single-page windows do not have a tab strip')
+    assert(not panel._pool[':tab:display'],'single-page windows do not have a tab strip')
     assert(panel._texts.title.fontSize>panel._texts['display:section:1'].fontSize)
     local top=panel.scroll.anchors.TOPLEFT
     assert(-top[3] >= 10+panel._pool.close:GetHeight() and -top[3] < 70,'viewport starts just below the title and close button')
@@ -627,9 +679,36 @@ test('single-page settings shell','a single page recovers its navigation space a
     local b=app(basic)
     local multi=b:Options({title='Settings',width=520,height=240,pages={page,{id='other',label='Other'}}})
     boot(b);assert(multi:Open())
-    assert(-multi.scroll.anchors.TOPLEFT[3]>=-top[3]+multi._pool['tab:display']:GetHeight())
-    assert(W.click(multi._pool['tab:other']) and multi._page=='other')
+    assert(-multi.scroll.anchors.TOPLEFT[3]>=-top[3]+multi._pool[':tab:display']:GetHeight())
+    assert(W.click(multi._pool[':tab:other']) and multi._page=='other')
     multi:Close();panel:Close()
+end)
+
+test('text close button setup retry','a temporary caption or anchor refusal must not leave an unusable pooled close button',function()
+    local a=app(basic)
+    local panel=a:Options({pages={{id='main'}}})
+    boot(a)
+    local apply=a.fonts.Apply
+    a.fonts.Apply=function(self,label,...)
+        if panel._pool.textClose and label:GetParent()==panel._pool.textClose then
+            return false,{message='close caption refused'}
+        end
+        return apply(self,label,...)
+    end
+    local ok,err=panel:Open()
+    assert(not ok and err.message:find('close caption refused',1,true))
+    a.fonts.Apply=apply
+    local close,caption=panel._pool.textClose,panel._texts['textClose:text']
+    local point,count=close.SetPoint,#W.frames
+    close.SetPoint=function()error('close anchor refused')end
+    ok,err=panel:Open()
+    assert(not ok and err.message:find('close anchor refused',1,true))
+    close.SetPoint=point
+    assert(panel:Open() and panel._pool.close==close and #W.frames==count)
+    assert(close.text==caption and caption:GetText()=='×' and close:GetWidth()==26)
+    assert(close.points[1]=='TOPRIGHT' and close.points[2]==-10 and close.points[3]==-10)
+    assert(W.click(close) and not panel._view and not panel:IsShown())
+    assert(panel:Open() and #W.frames==count and W.click(close))
 end)
 
 test('Forever native close button','click and Escape release the page; only the active theme owns the close hit area',function()
@@ -759,8 +838,8 @@ test('mouse navigation and color field layout','buttons must accept input; swatc
         W.load('MouseProfiles').Pages.Profiles(),
     }})
     boot(a);assert(panel:Open())
-    assert(W.click(panel._pool['tab:behavior']),'tab must accept a mouse click')
-    assert(panel._page=='behavior');assert(W.click(panel._pool['tab:appearance']))
+    assert(W.click(panel._pool[':tab:behavior']),'tab must accept a mouse click')
+    assert(panel._page=='behavior');assert(W.click(panel._pool[':tab:appearance']))
     local color=panel._pool['appearance:1:color'];local label=panel._texts['appearance:1:color:label']
     local font=panel._pool['appearance:1:font']
     assert(color.points[2]==font.points[2] and label.points[2]==0)
@@ -770,12 +849,12 @@ test('mouse navigation and color field layout','buttons must accept input; swatc
     assert(W.click(color));W.color(.9,.8,.7,true,true)
     assert(a:Get('color')[1]==.2 and color._swatch.color[1]==.2)
     for _,id in ipairs({'behavior','tracking','profiles','appearance'})do
-        assert(W.click(panel._pool['tab:'..id]));assert(panel._page==id and panel:IsShown())
-        assert(panel._pool['tab:'..id]._selected:IsShown())
+        assert(W.click(panel._pool[':tab:'..id]));assert(panel._page==id and panel:IsShown())
+        assert(panel._pool[':tab:'..id]._selected:IsShown())
     end
     local count=#W.frames;assert(W.click(panel._pool.close));assert(not panel:IsShown())
-    assert(not W.click(panel._pool['tab:behavior']))
-    assert(panel:Open());assert(W.click(panel._pool['tab:behavior']));assert(#W.frames==count)
+    assert(not W.click(panel._pool[':tab:behavior']))
+    assert(panel:Open());assert(W.click(panel._pool[':tab:behavior']));assert(#W.frames==count)
 end)
 
 -- Reuse the exact layout path used by generated options in a custom view. These
@@ -845,10 +924,10 @@ test('responsive options sections','screen changes collapse fields, columns and 
     assert(panel.frame:GetWidth()==344 and panel.frame.scale==1)
     assert(panel._pool['form:1:font'].points[2]==0)
     assert(two.points[2]==0 and two.points[3]<one.points[3])
-    assert(panel._pool['tab:tracking'].points[3]<panel._pool['tab:form'].points[3])
+    assert(panel._pool[':tab:tracking'].points[3]<panel._pool[':tab:form'].points[3])
     for _,b in pairs(panel._buttons)do assert(b.text.scale==1)end
-    assert(W.click(panel._pool['tab:behavior']) and panel._page=='behavior')
-    assert(W.click(panel._pool['tab:form']));UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED')
+    assert(W.click(panel._pool[':tab:behavior']) and panel._page=='behavior')
+    assert(W.click(panel._pool[':tab:form']));UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED')
     assert(one.points[3]==two.points[3] and #W.frames==count)
     panel:Close();assert(panel:Open());assert(#W.frames==count)
     local oldHeight=UIParent:GetHeight();UIParent:SetSize(200,180);W.event('DISPLAY_SIZE_CHANGED')
@@ -871,10 +950,10 @@ test('options navigation and cleanup recovery','tabs replace the page without hi
     local menu=panel._pool['appearance:1:font'];local closeMenu=menu.CloseMenu
     menu.CloseMenu=function(self)closeMenu(self);error('native selection refresh failed after closing')end
     -- Closed native dropdowns do not need CloseMenu/SignalUpdate at navigation.
-    assert(W.click(panel._pool['tab:behavior']))
+    assert(W.click(panel._pool[':tab:behavior']))
     assert(panel._page=='behavior' and panel._pool['behavior:1:enabled']:IsShown())
     assert(not first.active and hides==0,'tab navigation must not hide/reopen the shell')
-    assert(W.click(panel._pool['tab:appearance']));menu:OpenMenu()
+    assert(W.click(panel._pool[':tab:appearance']));menu:OpenMenu()
     local second=panel._view
     assert(pcall(panel.frame.Hide,panel.frame));assert(not panel:IsShown() and not second.active and panel._view==nil)
     menu.CloseMenu=closeMenu;assert(panel:Open('behavior'))
@@ -883,13 +962,13 @@ test('options navigation and cleanup recovery','tabs replace the page without hi
     -- OnHide callback was previously interrupted before cleanup completed.
     local stale=panel._view;panel.frame.shown=false
     assert(panel:Open('appearance'));assert(not stale.active and panel._view.active)
-    assert(W.click(panel._pool['tab:behavior']));check:SetChecked(true);assert(W.click(check));assert(a:Get('enabled'))
+    assert(W.click(panel._pool[':tab:behavior']));check:SetChecked(true);assert(W.click(check));assert(a:Get('enabled'))
     local nested=false
     panel.frame:HookScript('OnShow',function()
         local ok,err=panel:Open();assert(not ok and err.code=='reentrant');nested=true
     end)
     local count=#W.frames
-    for _=1,10 do panel.frame:Hide();assert(panel:Open());assert(W.click(panel._pool['tab:appearance']));assert(W.click(panel._pool['tab:behavior']))end
+    for _=1,10 do panel.frame:Hide();assert(panel:Open());assert(W.click(panel._pool[':tab:appearance']));assert(W.click(panel._pool[':tab:behavior']))end
     assert(nested and #W.frames==count)
     panel:Close();assert(panel._view==nil)
     local closeOnShow=true
@@ -989,6 +1068,36 @@ test('layout failure and unresolved geometry','unavailable geometry preserves an
     a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
 end)
 
+test('custom control visibility','hidden, failed and superseded controls release their subscriptions without disturbing their page',function()
+    local a=app(basic)
+    local host,owner,fail
+    local creates,hides,events=0,0,0
+    local sample={id='sample',type='custom',visible=function(app)return app:Get('enabled')end}
+    function sample.create(parent,app,scope)
+        assert(not host or host==parent)
+        host,owner=parent,scope;creates=creates+1
+        assert(owner:Event('PLAYER_ENTERING_WORLD',function()events=events+1 end))
+        if fail then error('sample construction failed') end
+        return {Refresh=function()end,Layout=function()return 20 end,Hide=function()hides=hides+1 end}
+    end
+    local panel=a:Options({pages={{id='sample',sections={{controls={sample}}}},{id='other'}}})
+    boot(a);assert(panel:Open());W.event('PLAYER_ENTERING_WORLD');assert(events==1)
+    local first=owner
+    assert(a:Set('enabled',false));assert(not first.active and not host:IsShown() and hides==1)
+    assert(a:Set('scale',1.5));W.event('PLAYER_ENTERING_WORLD');assert(events==1 and hides==1)
+    assert(a:Set('enabled',true));assert(owner~=first and owner.active and host:IsShown() and creates==2)
+    W.event('PLAYER_ENTERING_WORLD');assert(events==2)
+    assert(panel:SelectPage('other'));assert(not owner.active and hides==2)
+    fail=true
+    local ok,err=panel:SelectPage('sample')
+    assert(not ok and err.message:find('sample construction failed',1,true) and not owner.active)
+    W.event('PLAYER_ENTERING_WORLD');assert(events==2 and hides==2)
+    fail=false
+    assert(panel:Open() and host:IsShown() and creates==4)
+    W.event('PLAYER_ENTERING_WORLD');assert(events==3)
+    assert(panel:Close());assert(not owner.active and hides==3)
+end)
+
 test('options header component','a sample stays clear of the close button and scroll area, updates with settings and reuses its parent when reopened',function()
     local a=app(basic)
     local host,owner,last,hides
@@ -1025,6 +1134,40 @@ test('options header component','a sample stays clear of the close button and sc
     panel:Close();assert(hides==1 and not owner.active)
     assert(a:Set('enabled',true) and last==false)
     assert(panel:Open() and last and owner.active and #W.frames==count);panel:Close()
+end)
+
+test('distinct authored form IDs','an editable slider and a separately named text field never share their edit box',function()
+    local a=app(function(name)
+        return {savedVariables={name..'DB'},fields={
+            size={type='integer',default=12,min=1,max=64},
+            note={type='string',default='memo'},other={type='string',default='other'},
+        }}
+    end)
+    local panel=a:Options({pages={{id='text:style',sections={{controls={
+        {type='slider',key='size',id='size',label='Size',editable=true},
+        {type='text',key='note',id='size:value',label='Note'},
+        {type='text',key='other',id='size%3Avalue',label='Other'},
+    }}}},{id='text%3Astyle',sections={{controls={
+        {type='text',key='other',id='size:value',label='Other page'},
+    }}}},{id='tab',sections={{controls={{type='description',id='text',text='Help text'}}}}},
+        {id='1',label='First'}}})
+    boot(a);assert(panel:Open())
+    local entries={}
+    for _,widget in pairs(panel._pool) do
+        if widget.kind=='EditBox' and widget:IsShown() then entries[widget:GetText()]=widget end
+    end
+    assert(entries['12'] and entries.memo and entries.other,'each field displays its own setting')
+    local edit=entries['12']
+    edit:SetFocus();edit:SetText('20');edit.scripts.OnEnterPressed(edit)
+    assert(a:Get('size')==20 and a:Get('note')=='memo' and a:Get('other')=='other')
+    local note=entries.memo
+    note:SetText('changed');note.scripts.OnEnterPressed(note)
+    assert(a:Get('size')==20 and a:Get('note')=='changed')
+    assert(panel:SelectPage('text%3Astyle') and not note:IsShown())
+    assert(panel:SelectPage('text:style') and note:IsShown() and note:GetText()=='changed')
+    assert(panel:SelectPage('tab'))
+    assert(panel._pool[':tab:1'].text:GetText()=='First' and panel._texts['tab:1:text']:GetText()=='Help text')
+    panel:Close()
 end)
 
 print('PASS '..total..' focused tests')

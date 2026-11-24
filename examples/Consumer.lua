@@ -28,11 +28,12 @@ local preview
 local function paint(color)
     if preview then preview:SetBackdropColor(unpack(color)) end
 end
--- The header keeps this sample visible while either page scrolls.
-local sample
+-- The factory receives the same host when SND shows the sample again.
 local function createFontSample(parent, app)
+    local sample = parent.fontSample
     if not sample then
         sample = parent:CreateFontString(nil, 'OVERLAY', 'GameTooltipText')
+        parent.fontSample = sample
         sample:SetPoint('CENTER')
         sample:SetText('Aa')
     end
