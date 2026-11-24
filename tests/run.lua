@@ -117,6 +117,65 @@ test('options construction and menu lifetime','failed builds are retryable and s
     d.Text.SetWidth=setWidth;assert(panel:Open());assert(d._fullCaption=='Missing font' and not d._captioning)
 end)
 
+-- SpellStats reported Options.lua:499 from the bare command. The options and
+-- containment owners share display events on a duplicate-refusing native frame.
+test('slash opens a usable options window','a shared display registration or unavailable layout hook cannot block the settings editor',function()
+    for _, refuseSizeHook in ipairs({false, true}) do
+        local a=app(basic)
+        local panel=a:Options({pages={{id='display',sections={{controls={
+            {type='font',key='font',id='font',label='Font'},
+        }}}}}})
+        local opened, failure
+        local registered, handle=a:Slash('/bare',function()
+            opened, failure=panel:Open()
+        end)
+        assert(registered)
+        boot(a)
+        local id=a.name:upper()..'_SND_BARE'
+        local command=assert(SlashCmdList[id])
+        assert(_G['SLASH_'..id..'1']=='/bare')
+        local nativeCreate=CreateFrame
+        local refused=false
+        if refuseSizeHook then
+            CreateFrame=function(kind,name,...)
+                local frame=nativeCreate(kind,name,...)
+                if name==a.name..'_SND_Options' then
+                    local hook=frame.HookScript
+                    function frame:HookScript(event, fn)
+                        if event=='OnSizeChanged' then
+                            refused=true
+                            error('size hook unavailable')
+                        end
+                        return hook(self,event,fn)
+                    end
+                end
+                return frame
+            end
+        end
+        command('')
+        CreateFrame=nativeCreate
+        assert(opened and panel:IsShown(), failure and failure.message or 'missing panel')
+        if refuseSizeHook then
+            assert(refused and panel.frame.clampedToScreen, 'use native clamping after a refused layout hook')
+        else
+            assert(panel._keep and panel._keep.active, 'shared events must still attach the complete layout tracker')
+        end
+        local font=panel._menus['display:1:font']
+        font:OpenMenu()
+        for _,row in ipairs(font.root.rows)do
+            if row.value=='Arial' then row.choose(row.value)end
+        end
+        font:CloseMenu()
+        W.tick(.01)
+        assert(a:Get('font')=='Arial' and font.Text:GetText()=='Arial')
+        assert(W.click(panel._pool.close) and not panel:IsShown())
+        command('')
+        assert(opened and panel:IsShown() and font.Text:GetText()=='Arial')
+        assert(W.click(panel._pool.close) and not panel._view)
+        handle:Cancel()
+    end
+end)
+
 test('font and geometry native boundaries','accepts void SetFont results and clamps using effective scale; refuses protected frames',function()
     local a=app(basic);boot(a);local label=UIParent:CreateFontString();assert(a.fonts:Apply(label,'body'));assert(label.fontSize==14.25)
     local media={List=function()return{'Fixture'}end,Fetch=function()return'Fixture.ttf'end,RegisterCallback=function()end,UnregisterAllCallbacks=function()end}

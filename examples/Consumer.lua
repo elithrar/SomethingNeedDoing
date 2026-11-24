@@ -44,6 +44,7 @@ local panel = app:Options({
         },
     }} }, profiles},
 })
+-- The options shell handles screen containment, including native clamping fallback.
 -- Missing Blizzard chat infrastructure returns unavailable; keep the normal Result check.
 local registered, err = app:Slash('/sndexample', function()
     local ok, failure = panel:Toggle()

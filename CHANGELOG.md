@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5
+
+### Public API changes
+
+Previously, a failed screen-position tracker could abort the first `panel:Open()`. The options window now falls back to native screen clamping and opens with its controls available. Calls and return signatures are unchanged. No migration is required.
+
+### Internal improvements
+
+- Include the failed event or frame script in tracker attachment diagnostics.
+- Exercise opening options through a slash command, closing the panel, and reopening it on clients that refuse duplicate event registration or a layout hook.
+
 ## 0.5.4
 
 ### Public API changes

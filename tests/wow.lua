@@ -131,6 +131,7 @@ end
 function methods:CloseMenu()if self.menuOpen then self.menuOpen=false;if self.root.release then self.root.release()end end end
 function methods:IsProtected()return self.protected==true end
 function methods:IsForbidden()return self.forbidden==true end
+function methods:SetClampedToScreen(enabled)self.clampedToScreen=enabled end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
 function methods:SetFocus()self.focus=true end

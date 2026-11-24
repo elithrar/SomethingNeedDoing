@@ -514,12 +514,15 @@ SND._install[#SND._install + 1] = function(app)
             if not called then return false,I.error('unavailable',ok)end
             return ok,err
         end
-        local function attach(ok, err)
-            if not ok then h:Cancel();return false,err end
+        local function attach(name, ok, err)
+            if not ok then
+                h:Cancel()
+                return false,I.error(err.code,name..': '..err.message)
+            end
             return true
         end
         for _,event in ipairs({'UI_SCALE_CHANGED','DISPLAY_SIZE_CHANGED'}) do
-            local ok,err=attach(owner:Event(event,function() h:Refresh() end))
+            local ok,err=attach(event,owner:Event(event,function() h:Refresh() end))
             if not ok then return false,err end
         end
         local hooks={{frame,'OnShow',function() h:Refresh() end},
@@ -529,7 +532,7 @@ SND._install[#SND._install + 1] = function(app)
             {frame,'OnDragStop',function() dragging=false;h:Refresh() end}}
         if anchor then hooks[#hooks+1]={anchor,'OnSizeChanged',function() h:Refresh() end} end
         for _,hook in ipairs(hooks) do
-            local ok,err=attach(owner:HookScript(unpack(hook)))
+            local ok,err=attach(hook[2],owner:HookScript(unpack(hook)))
             if not ok then return false,err end
         end
         h:Refresh(); return true, h

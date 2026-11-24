@@ -326,7 +326,15 @@ SND._install[#SND._install + 1] = function(app)
                     requireResource(app.ui:Color(b._selected,'accent'))
                 end
             end
-            if not self._keep then local ok,result=app.layout:KeepOnScreen(f,{margin=8});I.check(ok,result.message or 'layout unavailable');self._keep=result end
+            if not self._keep then
+                local ok,result=app.layout:KeepOnScreen(f,{margin=8})
+                if ok then
+                    self._keep=result
+                else
+                    f:SetClampedToScreen(true)
+                    app.log:Warn('Options window using native screen clamping',{reason=result.message})
+                end
+            end
             if not self._escape then
                 UISpecialFrames=UISpecialFrames or {};table.insert(UISpecialFrames,name)
                 self._escape=I.handle(app,function()
