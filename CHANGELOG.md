@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1
+
+### Public API changes
+
+- The built-in font selector previously drew every name in the menu font. Each choice now previews its own typeface. A missing font falls back to readable text.
+- Options with a subheader gain a little space below the title and a thin divider above the form. Existing declarations pick up both changes automatically. No migration is required.
+
+### Internal improvements
+
+- Remove the circular indicator drawn by Forever’s native menu so selected choices show a single gold check.
+- Run the framework and consumer checks with upstream Lua 5.1.4, the Lua release identified in the Forever client.
+
 ## 0.6.0
 
 ### Public API changes

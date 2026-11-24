@@ -270,13 +270,17 @@ SND._install[#SND._install + 1] = function(app)
         end
         return true
     end
-    -- Keep Blizzard's radio semantics, hit testing and hover. Forever's
-    -- Vanilla/MenuVariants.lua supplies the same left texture on each radio.
-    local function styleRadio(button,description)
-        local mark=button.leftTexture1
-        if mark then
-            mark:SetAtlas(description:IsSelected() and 'common-dropdown-icon-checkmark-yellow-classic-2' or nil)
-            mark:SetSize(20,20)
+    -- Forever uses the Mainline menu family. Every radio has a ring that
+    -- anchors its label. Only the selected row has a second, higher texture.
+    local function styleRadio(button)
+        local ring=button.leftTexture1
+        if not ring then return end
+        ring:SetAlpha(0)
+        local check=button.leftTexture2
+        if check then
+            check:SetAtlas('common-dropdown-icon-checkmark-yellow',true)
+            check:ClearAllPoints()
+            check:SetPoint('CENTER',ring,'CENTER',2,1)
         end
     end
     function ui:StyleMenu(root)
@@ -333,32 +337,68 @@ SND._install[#SND._install + 1] = function(app)
         for name in pairs(names) do out[#out+1]={label=name,value=name} end
         table.sort(out,function(a,b) return a.label < b.label end); return out
     end
-    local function apply(object, entry)
-        local role,options=entry.role,entry.options
-        local fallback, nativeSize, flags = nativeFont()
-        local path = fallback
-        local selected = preference(); media = media or getMedia()
-        if selected == 'Arial' then path='Fonts\\ARIALN.TTF'
-        elseif selected == 'Friz Quadrata' then path='Fonts\\FRIZQT__.TTF'
+    local function familyPath(selected,preview)
+        if selected == 'Arial' then return 'Fonts\\ARIALN.TTF'
+        elseif selected == 'Friz Quadrata' then return 'Fonts\\FRIZQT__.TTF'
         elseif selected == 'Game tooltip' then
             local tooltip=GameTooltipTextLeft2 or GameTooltipText
-            if tooltip and tooltip.GetFont then path=tooltip:GetFont()end
-        elseif media and media.Fetch then path = media:Fetch('font', selected, true) or fallback end
+            if tooltip and tooltip.GetFont then return tooltip:GetFont()end
+        elseif media then
+            -- Fetch honors a global override. A sample identifies the named asset itself.
+            if preview and media.HashTable then
+                local files=media:HashTable('font')
+                if type(files)=='table' then return files[selected] end
+            end
+            if media.Fetch then return media:Fetch('font',selected,true) end
+        end
+    end
+    local function setFont(object,path,size,flags)
+        if type(path)~='string' or path=='' then return end
+        local ok,result=pcall(object.SetFont,object,path,size,flags)
+        if not ok or result==false then return end
+        local read,actual,height,actualFlags=pcall(object.GetFont,object)
+        if read and type(actual)=='string' and actual:gsub('/','\\'):lower()==path:gsub('/','\\'):lower()
+            and V.Number(height) and height>0 then return actual,height,actualFlags end
+    end
+    -- Blizzard's menu compositor forbids SetFont on its pooled row labels.
+    -- Reuse FontObjects by row index as menus reopen or the list of families changes.
+    local previewFonts={}
+    function fonts:_menuPreview(index,name)
+        local ok,path=pcall(familyPath,name,true)
+        if not ok or type(path)~='string' or path=='' then return GameFontNormal end
+        local slot=previewFonts[index]
+        if not slot then
+            local created,font=pcall(CreateFont,app.name..'_SND_MenuPreview'..index)
+            if not created or not font then return GameFontNormal end
+            slot={font=font}
+            previewFonts[index]=slot
+        end
+        if slot.path~=path then
+            if not setFont(slot.font,path,sizes.menu,'') then slot.path=nil;return GameFontNormal end
+            slot.path=path
+        end
+        return slot.font
+    end
+    local function apply(object, entry)
+        local role,options=entry.role,entry.options
+        local fallback=nativeFont()
+        local selected=preference();media=media or getMedia()
+        local path=familyPath(selected) or fallback
         local request = selected .. ':' .. tostring(path)
         path = downgrade[request] or path
         local size = sizes[role]
         if (role == 'body' or role == 'muted') and app._ready and app._settingsFields and app._settingsFields.fontSize then size = app:Get('fontSize') end
-        size=options.size or size;flags=options.flags or ''
+        size=options.size or size
+        local flags=options.flags or ''
 
         local function try(candidate)
             local actual,height,actualFlags=object:GetFont()
             if not entry.native and entry.path==candidate and entry.size==size and entry.flags==flags and actual==entry.actual and height==entry.height and actualFlags==entry.actualFlags then return true end
-            local ok, result = pcall(object.SetFont,object,candidate,size,flags or '')
-            if not ok or result == false then return false end
-            local read, actual, height = pcall(object.GetFont,object)
-            local valid=read and type(actual)=='string' and actual:gsub('/','\\'):lower()==candidate:gsub('/','\\'):lower() and V.Number(height) and height>0
-            if valid then entry.native=nil;entry.path,entry.size,entry.flags=candidate,size,flags;entry.actual,entry.height,entry.actualFlags=object:GetFont()end
-            return valid
+            actual,height,actualFlags=setFont(object,candidate,size,flags)
+            if not actual then return false end
+            entry.native=nil;entry.path,entry.size,entry.flags=candidate,size,flags
+            entry.actual,entry.height,entry.actualFlags=actual,height,actualFlags
+            return true
         end
         if nativeFallback[request] then
             local native=nativeFallback[request]

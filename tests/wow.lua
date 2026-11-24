@@ -46,8 +46,8 @@ end
 function CreateFont(name)local f=object('Font');_G[name]=f;return f end
 function methods:CreateTexture()return object('Texture',self)end
 function methods:SetTexture(value)self.texture=value end
-function methods:SetAtlas(asset)self.atlas=asset end
-function methods:SetDrawLayer(layer)self.layer=layer end
+function methods:SetAtlas(asset,useAtlasSize)self.atlas,self.useAtlasSize=asset,useAtlasSize end
+function methods:SetDrawLayer(layer,subLevel)self.layer,self.subLevel=layer,subLevel end
 function methods:SetColorTexture(...)self.color={...}end
 function methods:SetVertexColor(...)self.tint={...}end
 function methods:SetAllPoints(other)self.all=other end
@@ -118,6 +118,7 @@ end
 function methods:GetFont()return self.font or 'Fonts\\FRIZQT__.TTF',self.fontSize or 13,self.flags or ''end
 function methods:SetFontObject(font)self.font,self.fontSize,self.flags=font:GetFont()end
 function methods:SetText(value)self.text=tostring(value or '')end
+function methods:SetTextToFit(value)self:SetText(value);self.fittedFont=self:GetFont()end
 function methods:SetTextColor(...)self.textColor={...}end
 function methods:SetJustifyH(justify)self.justifyH=justify end
 function methods:GetText()return self.text end
@@ -178,10 +179,19 @@ local function openMenu(owner,build)
     for _,fn in ipairs(root.acquired)do fn(popup)end
     for _,row in ipairs(root.rows)do
         local button={fontString=object('FontString'),highlight=object('Texture')}
+        button.fontString.SetFont=function()error('the menu compositor forbids SetFont')end
         button.highlight:SetTexture('Interface\\QuestFrame\\UI-QuestTitleHighlight')
         if row:IsRadio() then
             button.leftTexture1=object('Texture')
-            button.leftTexture1:SetAtlas(row:IsSelected() and 'common-dropdown-icon-radialtick-yellow-classic' or 'common-dropdown-tickradial-classic')
+            button.leftTexture1:SetAtlas('common-dropdown-tickradial',true)
+            button.leftTexture1:SetPoint('LEFT',-3,0)
+            button.fontString:SetPoint('LEFT',button.leftTexture1,'RIGHT',1,0)
+            if row:IsSelected() then
+                button.leftTexture2=object('Texture')
+                button.leftTexture2:SetAtlas('common-dropdown-icon-radialtick-yellow',true)
+                button.leftTexture2:SetDrawLayer('ARTWORK',1)
+                button.leftTexture2:SetPoint('TOPLEFT',button.leftTexture1,'TOPLEFT')
+            end
         end
         row.button=button
         for _,fn in ipairs(row.initializers)do fn(button,row,popup)end

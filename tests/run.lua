@@ -813,6 +813,63 @@ test('generated options and settled font layout','default panels must bind valid
     for _,name in ipairs(UISpecialFrames)do assert(name~=frameName)end
 end)
 
+test('font choices preview their own families','pooled menu labels borrow the named font, survive missing assets and stay released after the next appearance change',function()
+    local oldCreate,oldLib,oldTip=CreateFont,LibStub,GameTooltipTextLeft2
+    local files={Serif='Serif.ttf',Broken='Rejected.ttf'}
+    local names={'Serif','Broken'}
+    local lib={List=function()return names end,HashTable=function()return files end,Fetch=function()return 'Override.ttf' end}
+    LibStub=function()return lib end
+    GameTooltipTextLeft2=CreateFont('PreviewTestTooltip');GameTooltipTextLeft2:SetFont('Tooltip.ttf',13,'')
+    local count=0
+    CreateFont=function(name)
+        local font=oldCreate(name)
+        if name:find('_SND_MenuPreview',1,true) then
+            count=count+1
+            local setFont=font.SetFont
+            function font:SetFont(path,...)if path~='Rejected.ttf' then return setFont(self,path,...) end end
+        end
+        return font
+    end
+    local a=app(function(name)
+        local spec=basic(name)
+        spec.fields.font.default='Missing'
+        spec.fields.mode={type='enum',default='on',values={'on'}}
+        return spec
+    end)
+    local panel=a:Options({pages={{id='main',sections={{controls={
+        {type='font',id='font',key='font'},{type='select',id='mode',key='mode',choices={{value='on',label='On'}}},
+    }}}}}})
+    boot(a);assert(panel:Open())
+    local picker=panel._menus['main:1:font']
+    local function open()
+        picker:OpenMenu()
+        local rows={}
+        for _,row in ipairs(picker.root.rows)do
+            local label=row.button.fontString
+            assert(label:GetText()==row.label and label.fittedFont==label:GetFont(),'measure after applying the preview')
+            rows[row.value]=label
+        end
+        return rows
+    end
+    local rows=open()
+    local fallback=GameFontNormal:GetFont()
+    assert(rows.Arial:GetFont()=='Fonts\\ARIALN.TTF' and rows['Friz Quadrata']:GetFont()=='Fonts\\FRIZQT__.TTF')
+    assert(rows['Game tooltip']:GetFont()=='Tooltip.ttf' and rows.Serif:GetFont()=='Serif.ttf')
+    assert(rows.Missing:GetFont()==fallback and rows.Broken:GetFont()==fallback and a:Get('font')=='Missing')
+    local released=rows.Serif;picker:CloseMenu();released:SetFontObject(GameTooltipTextLeft2)
+    assert(a:Set('font','Serif'));a.fonts:Refresh()
+    assert(picker.Text:GetFont()=='Override.ttf' and released:GetFont()=='Tooltip.ttf')
+    local ordinary=panel._menus['main:1:mode'];ordinary:OpenMenu()
+    assert(ordinary.root.rows[1].button.fontString:GetFont()=='Override.ttf');ordinary:CloseMenu()
+    files.Missing='Registered.ttf';names[#names+1]='Missing'
+    rows=open();assert(rows.Missing:GetFont()=='Registered.ttf');picker:CloseMenu()
+    local allocated=count
+    files.Serif='Serif New.ttf'
+    rows=open();assert(rows.Serif:GetFont()=='Serif New.ttf' and count==allocated)
+    picker:CloseMenu();panel:Close();W.event('PLAYER_LOGOUT')
+    CreateFont,LibStub,GameTooltipTextLeft2=oldCreate,oldLib,oldTip
+end)
+
 test('registered font recovers on refresh','a transient read failure must preserve the last successful binding for a live label',function()
     local a=app(basic);boot(a)
     local bar=UIParent:CreateFontString()
@@ -1430,34 +1487,49 @@ test('equal-value profile replacement','reset/copy/switch must invalidate previe
     a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
 end)
 
--- Forever 94376449, Blizzard_Menu/Vanilla/MenuVariants.lua and Menu.lua:
--- the popup owns compositor textures and a native radio owns leftTexture1.
+-- Forever 71037, Blizzard_Menu/Mainline/MenuVariants.lua and MenuTemplates.lua:
+-- the selected dot is a separate texture above the ring that anchors the label.
 test('Forever popup presentation','only owned menus receive an opaque fill and a single selected check',function()
     local a,sdk=app()
     a:Appearance({defaultTheme='forever',themes={forever=sdk.Themes.forever,modern=sdk.Themes.modern}})
-    a:Settings({savedVariables={a.name..'DB'},fields={theme={type='enum',values={'forever','modern'},default='forever'}}})
-    local choices={{label='Forever',value='forever'},{label='Modern',value='modern'}}
-    local panel=a:Options({pages={{id='p',sections={{controls={{type='select',id='theme',key='theme',label='Theme',choices=choices}}}}}}})
+    a:Settings({savedVariables={a.name..'DB'},fields={
+        theme={type='enum',values={'forever','modern'},default='forever'},
+        choice={type='enum',values={'a','b'},default='a'},
+    }})
+    local choices={{label='First',value='a'},{label='Second',value='b'}}
+    local panel=a:Options({pages={{id='p',sections={{controls={{type='select',id='choice',key='choice',label='Choice',choices=choices}}}}}}})
     boot(a);assert(panel:Open())
-    local dropdown=panel._menus['p:1:theme'];dropdown:OpenMenu()
+    local dropdown=panel._menus['p:1:choice'];dropdown:OpenMenu()
     local root=dropdown.root
     local fill=root.popup.children[1]
     assert(fill and fill.layer=='BACKGROUND' and fill.color[4]==1 and fill.color[1]<.2)
     local first,second=root.rows[1],root.rows[2]
-    assert(first.button.leftTexture1.atlas=='common-dropdown-icon-checkmark-yellow-classic-2')
-    assert(first.button.leftTexture1.width==20 and second.button.leftTexture1.atlas==nil)
+    local function checkMark(on,off)
+        assert(on.leftTexture2.atlas=='common-dropdown-icon-checkmark-yellow' and not off.leftTexture2,
+            'the upper selected texture must display the check instead of the native radio dot')
+        assert(on.leftTexture2.useAtlasSize and on.leftTexture2.subLevel==1)
+        assert(on.leftTexture1.alpha==0 and off.leftTexture1.alpha==0,'neither native ring should be visible')
+        assert(on.leftTexture2.points[1]=='CENTER' and on.leftTexture2.points[2]==on.leftTexture1)
+        assert(on.fontString.points[2]==on.leftTexture1 and off.fontString.points[2]==off.leftTexture1)
+    end
+    checkMark(first.button,second.button)
     assert(first.button.highlight.texture=='Interface\\QuestFrame\\UI-QuestTitleHighlight')
 
     local foreign=CreateFrame('DropdownButton',nil,UIParent,'WowStyle1DropdownTemplate')
     foreign:SetupMenu(function(_,menu)menu:CreateRadio('Other',function()return false end,function()end)end)
     foreign:OpenMenu()
-    assert(#foreign.root.popup.children==0 and foreign.root.rows[1].button.leftTexture1.atlas=='common-dropdown-tickradial-classic')
+    assert(#foreign.root.popup.children==0 and foreign.root.rows[1].button.leftTexture1.atlas=='common-dropdown-tickradial')
+    assert(foreign.root.rows[1].button.leftTexture1.alpha~=0)
     foreign:CloseMenu()
 
-    second.choose(second.value);assert(a:Get('theme')=='modern')
+    second.choose(second.value);assert(a:Get('choice')=='b')
+    dropdown:CloseMenu();W.tick(.01);dropdown:OpenMenu()
+    checkMark(dropdown.root.rows[2].button,dropdown.root.rows[1].button)
+    assert(a:Set('theme','modern'))
     dropdown:CloseMenu();W.tick(.01);dropdown:OpenMenu()
     assert(#dropdown.root.popup.children==0)
-    assert(dropdown.root.rows[2].button.leftTexture1.atlas=='common-dropdown-icon-radialtick-yellow-classic')
+    assert(dropdown.root.rows[2].button.leftTexture2.atlas=='common-dropdown-icon-radialtick-yellow')
+    assert(dropdown.root.rows[2].button.leftTexture1.alpha~=0)
     dropdown:CloseMenu();panel:Close()
 end)
 
@@ -1566,10 +1638,16 @@ test('options subheader component','a fixed selector sits below the title and st
         end},header=withPreview and {width=46,create=function(host)preview=host;return component(46)end} or nil,
             pages={{id='main'}}})
         boot(a);assert(p:Open());local initial=owner
+        local divider=assert(p._headerDivider)
         local function check()
             local bottom=-parent.points[3]+26
-            assert(-parent.points[3]>=16+p._texts.title:GetStringHeight() and parent.points[2]==16)
-            assert(bottom< -p.scroll.anchors.TOPLEFT[3])
+            assert(-parent.points[3]>=16+p._texts.title:GetStringHeight()+8 and parent.points[2]==16)
+            local left,right=divider.anchors.TOPLEFT,divider.anchors.TOPRIGHT
+            assert(divider:GetParent()==p.frame and divider:GetHeight()==1)
+            assert(left[2]==16 and right[2]==-16 and left[3]==right[3])
+            if preview then bottom=math.max(bottom,-preview.points[3]+preview:GetHeight()) end
+            assert(-left[3]>=bottom+6,'separator clears both header components')
+            assert(-p.scroll.anchors.TOPLEFT[3]>=-left[3]+divider:GetHeight()+6,'controls clear the separator')
         end
         check();assert(parent:GetWidth()==200)
         if preview then assert(preview.points[3]==-16 and preview.points[1]=='TOPRIGHT')end
@@ -1577,7 +1655,8 @@ test('options subheader component','a fixed selector sits below the title and st
         assert(parent:GetWidth()==p.frame:GetWidth()-32)
         if preview then assert(-preview.points[3]>=-parent.points[3]+26)end
         UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED')
-        assert(p:Close() and not initial.active);assert(p:Open() and owner~=initial and owner.active);p:Close()
+        assert(p:Close() and not initial.active);assert(p:Open() and owner~=initial and owner.active)
+        assert(p._headerDivider==divider);check();p:Close()
     end
 end)
 
@@ -1595,7 +1674,7 @@ test('options header component','a sample stays clear of the close button and sc
             Hide=function()hides=(hides or 0)+1 end,
         }
     end}})
-    boot(a);assert(panel:Open() and last and host:GetParent()==panel.frame)
+    boot(a);assert(panel:Open() and last and host:GetParent()==panel.frame and not panel._headerDivider)
     assert(host.points[1]=='TOPRIGHT' and -host.points[2]>panel._pool.close:GetWidth())
     local function checkTitle()
         local point=panel._texts.title.anchors.TOPLEFT

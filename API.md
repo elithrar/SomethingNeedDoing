@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.6.0
+# SomethingNeedDoing API — 0.6.1
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on upstream PUC Lua 5.1.4 and include pinned consumer-domain checks. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -285,13 +285,15 @@ An options page releases its subscriptions when the game interface is hidden. Wh
 
 Color controls display the setting label and its saved RGB swatch in the same field column as other inputs (stacked in narrow panels). Clicking the swatch opens the native picker. A preview is transient and returns to its original value if another add-on takes over the picker.
 
+A `font` selector renders each available typeface on its own menu row. Opening the menu leaves the saved preference unchanged.
+
 Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `color`, `button`, and `description`. Bound controls declare `key`; labels, hints, units, menu choices (`choices = { { label = ..., value = ... } }`), and button `action(app)` callbacks come from the consumer. Numeric bounds come from the field schema; sliders display their formatted value beside the track. Formatting preserves the stored units. `enabled(app)` and `visible(app)` are pure predicates. Reset/copy confirmation is supplied by the profile page, not by silently changing model semantics. You may assign ordinary `sections` to the table returned by `SND.Pages.Profiles()`; these render below its built-in commands. Existing declarations need no migration.
 
 **Custom components.** A declaration such as `{type = "custom", id = "preview", create = createPreview}` supplies a factory with the signature `create(parent, app, scope)`. The factory returns a component with `Refresh()`, `Layout(width) -> height` and `Hide()`. Height must be finite and nonnegative. Create child frames under the supplied parent and attach subscriptions to the supplied scope. When the component’s visibility predicate hides it, the page changes, or the window closes, SND cancels its scope and calls `Hide()` once. Revealing it runs the factory again with the same pooled parent and a fresh component scope. Reuse child frames and rebind their callbacks in the factory. Ordinary refreshes reuse the active component.
 
 **Header component.** Set `header = {width = 46, create = createPreview}` on the options declaration to keep a preview visible as the page scrolls. The title and preview share a top edge when they fit side by side. On narrow windows the preview moves below the title. Supply a positive, finite width and the same factory and methods as a custom control. The shell passes the available width to `Layout(width)`. Closing the panel or switching pages ends the header component’s scope and calls `Hide()`. The next activation calls the factory with the pooled parent and a fresh component scope. See the [executable font sample](examples/Consumer.lua).
 
-An optional `subheader = {width = 180, create = createProfilePicker}` places a second component beneath the title. It has the same scoped lifetime and layout contract as the header. With enough room the title and subheader occupy the left column and the header stays at the upper right. On narrow windows SND measures the subheader at the available width and allows the header to move down.
+An optional `subheader = {width = 180, create = createProfilePicker}` places a second component beneath the title. It has the same scoped lifetime and layout contract as the header. With enough room the title and subheader occupy the left column and the header stays at the upper right. On narrow windows SND measures the subheader at the available width and allows the header to move down. A divider spans the form beneath both components.
 
 **Editable slider.** Set `editable = true` on a slider to put a numeric text field beside its track. Type in the setting’s stored units and press Enter to save. For a scale of 125%, enter `1.25`. Input must be finite, within the schema’s bounds, and valid for its numeric type. Accepted values follow `step` from the minimum (default step 1) and include the maximum. Escape, focus loss, or an invalid entry restores the saved value. If the settings adapter rejects a drag, the thumb returns to the committed value. Read-only and disabled controls apply to both inputs. Omit `editable` to keep the formatted readout.
 

@@ -259,7 +259,7 @@ SND._install[#SND._install + 1] = function(app)
             dropdown._captioning=nil
             if not ok then error(err,0)end
         end
-        local function dropdown(id,parent,entries,get,set)
+        local function dropdown(id,parent,entries,get,set,previewFonts)
             local d=ownedControl(id,parent,'dropdown');panel._menus[id]=d;d:SetSize(230,26)
             if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu')end
             requireResource(app.fonts:Apply(panel._menuFont,'menu'))
@@ -287,9 +287,16 @@ SND._install[#SND._install + 1] = function(app)
                 if type(entries)=='function' then offered=entries() end
                 offered=I.copy(offered)
                 choices(offered)
-                for _, entry in ipairs(offered) do
+                for index, entry in ipairs(offered) do
                     local row=root:CreateRadio(entry.label,function(value)return I.equal(get(),value)end,choose,entry.value)
-                    row:AddInitializer(function(native) if native.fontString then native.fontString:SetFontObject(panel._menuFont) end end)
+                    row:AddInitializer(function(native)
+                        local label=native.fontString
+                        if label then
+                            local font=previewFonts and app.fonts:_menuPreview(index,entry.value) or panel._menuFont
+                            label:SetFontObject(font)
+                            if previewFonts then label:SetTextToFit(entry.label) end
+                        end
+                    end)
                 end
                 requireResource(app.ui:StyleMenu(root))
             end)
@@ -405,7 +412,7 @@ SND._install[#SND._install + 1] = function(app)
                 widget=ownedControl(id,parent,'checkbox');widget:SetSize(20,20);widget:SetChecked(app:Get(c.key))
                 label=text(id..':label',parent,c.label);label:SetWidth(width-28);widget:SetScript('OnClick',function(b)write(b:GetChecked()==true)end)
             elseif kind=='select' or kind=='font' then
-                widget=dropdown(id,parent,kind=='font' and function()return app.fonts:Entries()end or c.choices or {},function()return app:Get(c.key)end,write)
+                widget=dropdown(id,parent,kind=='font' and function()return app.fonts:Entries()end or c.choices or {},function()return app:Get(c.key)end,write,kind=='font')
                 label=text(id..':label',parent,c.label)
             elseif kind=='text' or kind=='number' then
                 widget=input(id,parent,math.min(width,230))
@@ -472,6 +479,13 @@ SND._install[#SND._install + 1] = function(app)
             end)
             requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading',{size=18});title:SetPoint('TOPLEFT',16,-16)
+            if spec.subheader then
+                self._headerDivider=self._headerDivider or f:CreateTexture(nil,'ARTWORK')
+                self._headerDivider:SetColorTexture(1,1,1,1)
+                self._headerDivider:SetHeight(1)
+                self._headerDivider:SetAlpha(.7)
+                requireResource(app.ui:Color(self._headerDivider,'border'))
+            end
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-50);scroll:SetPoint('BOTTOMRIGHT',-16,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
             local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-16,-50);bar:SetPoint('BOTTOMRIGHT',-16,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
@@ -645,8 +659,8 @@ SND._install[#SND._install + 1] = function(app)
                 if not spec.subheader then return titleHeight end
                 local width=math.min(available,spec.subheader.width)
                 local host,height=customComponent('subheader',panel.frame,spec.subheader,width)
-                host:ClearAllPoints();host:SetPoint('TOPLEFT',16,-(16+titleHeight+4))
-                return titleHeight+4+height
+                host:ClearAllPoints();host:SetPoint('TOPLEFT',16,-(16+titleHeight+8))
+                return titleHeight+8+height
             end
             if not spec.header then return math.max(headerBottom,24+leftHeight(frameWidth-32)) end
 
@@ -684,6 +698,13 @@ SND._install[#SND._install + 1] = function(app)
                 self.frame:SetHeight(math.max(140,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
                 refreshClose()
                 local tabY=layoutHeader(frameWidth)
+                if self._headerDivider then
+                    local divider=self._headerDivider
+                    divider:ClearAllPoints()
+                    divider:SetPoint('TOPLEFT',16,-tabY+2)
+                    divider:SetPoint('TOPRIGHT',-16,-tabY+2)
+                    tabY=tabY+5
+                end
                 local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.max(1,math.min(4,#tabs)),minColumnWidth=110,columnGap=4})
                 local rowHeight=0
                 for index,p in ipairs(tabs)do
