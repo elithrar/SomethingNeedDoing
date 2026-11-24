@@ -1629,6 +1629,46 @@ test('custom control visibility','hidden, failed and superseded controls release
     assert(panel:Close());assert(not owner.active and hides==3)
 end)
 
+test('options footer bounds','a wrapped footer stays clear of scrolling controls and disappears from layout when omitted',function()
+    local a=app()
+    local pages={{id='p',sections={{controls={{type='custom',create=function()
+        return {Refresh=function()end,Hide=function()end,Layout=function()return 70 end}
+    end}}}}}}
+    local function open(owner,footer)
+        local panel=owner:Options({title='Settings',width=360,height=180,footer=footer,pages=pages})
+        boot(owner);assert(panel:Open());return panel
+    end
+    assert(not pcall(a.Options,a,{footer={},pages=pages}))
+    local p=open(a,'SpellStats version 1.2.3 for WoW Forever')
+    local label=p._texts.footer
+    local function check(panel)
+        local footer=panel._texts.footer
+        local bottom=16
+        if footer then
+            assert(footer:GetParent()==panel.frame and footer.justifyH=='RIGHT' and footer:GetWidth()==panel.frame:GetWidth()-32)
+            assert(footer.anchors.BOTTOMRIGHT[2]==-16 and footer.anchors.BOTTOMRIGHT[3]==16)
+            assert(footer.fontSize==11.25 and footer:GetHeight()==footer:GetStringHeight())
+            bottom=bottom+footer:GetHeight()+6
+        end
+        local viewport=panel.frame:GetHeight()+panel.scroll.anchors.TOPLEFT[3]-bottom
+        assert(panel.scroll.anchors.BOTTOMRIGHT[3]==bottom and panel.bar.anchors.BOTTOMRIGHT[3]==bottom)
+        assert(viewport>=48 and panel._maximum==math.max(0,panel.body:GetHeight()-viewport))
+    end
+    check(p);assert(not p.bar:IsShown())
+    local wideHeight=label:GetHeight()
+    local oldWidth,oldHeight=UIParent:GetWidth(),UIParent:GetHeight()
+    UIParent:SetSize(176,128);W.event('DISPLAY_SIZE_CHANGED')
+    check(p);assert(label:GetHeight()>wideHeight and p.bar:IsShown())
+    assert(p.frame:GetHeight()*p.frame.scale<=UIParent:GetHeight()-16+.001)
+    assert(p:Close() and not label:IsVisible());assert(p:Open() and p._texts.footer==label);check(p)
+    UIParent:SetSize(oldWidth,oldHeight);W.event('DISPLAY_SIZE_CHANGED')
+    check(p);assert(label:GetHeight()==wideHeight);p:Close()
+    for _,footer in ipairs({'',false})do
+        local bare=open(app(),footer or nil)
+        assert(not bare._texts.footer);check(bare);bare:Close()
+    end
+end)
+
 test('options subheader component','a fixed selector sits below the title and stacks clear of the preview and scrolling controls',function()
     for _,withPreview in ipairs({false,true})do
         local a=app(basic);local parent,owner,preview

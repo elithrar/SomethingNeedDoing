@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2
+
+### Public API changes
+
+An options panel can now display a short footer such as `footer = app.version`. Previously an add-on had to anchor its own label to the frame. SND places the footer inside the lower-right corner and reserves space above it for the scrolling form. Existing panels can omit the field. No migration is required.
+
+### Internal improvements
+
+- Measure the footer when laying out the scroll area and scrollbar, including when the panel scales down.
+
 ## 0.6.1
 
 ### Public API changes

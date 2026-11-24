@@ -25,6 +25,7 @@ SND._install[#SND._install + 1] = function(app)
         end
         I.array(spec.pages, 'pages', true)
         I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
+        I.check(spec.footer==nil or type(spec.footer)=='string','footer must be a string')
         spec.layout=I.formLayout(spec.layout)
         for _,slot in ipairs({'header','subheader'})do
             local component=spec[slot]
@@ -479,6 +480,10 @@ SND._install[#SND._install + 1] = function(app)
             end)
             requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading',{size=18});title:SetPoint('TOPLEFT',16,-16)
+            if spec.footer and spec.footer:find('%S') then
+                local footer=text('footer',f,spec.footer,'muted',{size=11})
+                footer:SetJustifyH('RIGHT');footer:SetWordWrap(true);footer:SetPoint('BOTTOMRIGHT',-16,16)
+            end
             if spec.subheader then
                 self._headerDivider=self._headerDivider or f:CreateTexture(nil,'ARTWORK')
                 self._headerDivider:SetColorTexture(1,1,1,1)
@@ -720,22 +725,29 @@ SND._install[#SND._install + 1] = function(app)
                     end
                 end
                 local bodyTop=#tabs>0 and tabY+10 or tabY
+                local bodyBottom=16
+                local footer=self._texts.footer
+                if footer then
+                    footer:SetWidth(frameWidth-32);footer:SetHeight(0)
+                    local height=footer:GetStringHeight();footer:SetHeight(height)
+                    bodyBottom=bodyBottom+height+6
+                end
                 -- Reserve a usable body even when wrapped navigation is taller
                 -- than the requested shell. Scale only if that minimum cannot fit.
-                local minimumHeight=bodyTop+64
+                local minimumHeight=bodyTop+48+bodyBottom
                 scale=math.min(scale,math.max(.1,(UIParent:GetHeight()-16)/minimumHeight))
                 self.frame:SetScale(scale)
                 self.frame:SetHeight(math.max(minimumHeight,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
-                self.scroll:ClearAllPoints();self.scroll:SetPoint('TOPLEFT',16,-bodyTop);self.scroll:SetPoint('BOTTOMRIGHT',-16,16)
-                self.bar:ClearAllPoints();self.bar:SetPoint('TOPRIGHT',-16,-bodyTop);self.bar:SetPoint('BOTTOMRIGHT',-16,16)
-                local viewportHeight=self.frame:GetHeight()-bodyTop-16
+                self.scroll:ClearAllPoints();self.scroll:SetPoint('TOPLEFT',16,-bodyTop);self.scroll:SetPoint('BOTTOMRIGHT',-16,bodyBottom)
+                self.bar:ClearAllPoints();self.bar:SetPoint('TOPRIGHT',-16,-bodyTop);self.bar:SetPoint('BOTTOMRIGHT',-16,bodyBottom)
+                local viewportHeight=self.frame:GetHeight()-bodyTop-bodyBottom
                 local page
                 for _,p in ipairs(self._pages)do if p.id==self._page then page=p;break end end
                 local width=frameWidth-32
                 local y=self:_layoutPage(page,width)
                 if y>viewportHeight then
                     -- Only an overflowing page pays for the scrollbar and its gap.
-                    self.scroll:SetPoint('BOTTOMRIGHT',-32,16)
+                    self.scroll:SetPoint('BOTTOMRIGHT',-32,bodyBottom)
                     y=self:_layoutPage(page,width-16)
                 end
                 for _,p in ipairs(tabs)do

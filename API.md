@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.6.1
+# SomethingNeedDoing API — 0.6.2
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on upstream PUC Lua 5.1.4 and include pinned consumer-domain checks. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -294,6 +294,8 @@ Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `col
 **Header component.** Set `header = {width = 46, create = createPreview}` on the options declaration to keep a preview visible as the page scrolls. The title and preview share a top edge when they fit side by side. On narrow windows the preview moves below the title. Supply a positive, finite width and the same factory and methods as a custom control. The shell passes the available width to `Layout(width)`. Closing the panel or switching pages ends the header component’s scope and calls `Hide()`. The next activation calls the factory with the pooled parent and a fresh component scope. See the [executable font sample](examples/Consumer.lua).
 
 An optional `subheader = {width = 180, create = createProfilePicker}` places a second component beneath the title. It has the same scoped lifetime and layout contract as the header. With enough room the title and subheader occupy the left column and the header stays at the upper right. On narrow windows SND measures the subheader at the available width and allows the header to move down. A divider spans the form beneath both components.
+
+Set `footer = app.version` or supply another short string to display a muted caption in the lower right. The shell measures the caption and reserves space beneath the scrolling content. An omitted or empty footer takes no space.
 
 **Editable slider.** Set `editable = true` on a slider to put a numeric text field beside its track. Type in the setting’s stored units and press Enter to save. For a scale of 125%, enter `1.25`. Input must be finite, within the schema’s bounds, and valid for its numeric type. Accepted values follow `step` from the minimum (default step 1) and include the maximum. Escape, focus loss, or an invalid entry restores the saved value. If the settings adapter rejects a drag, the thumb returns to the committed value. Read-only and disabled controls apply to both inputs. Omit `editable` to keep the formatted readout.
 

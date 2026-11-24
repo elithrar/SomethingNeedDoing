@@ -52,6 +52,7 @@ local profiles = SND.Pages.Profiles()
 profiles.sections = {{controls={{type='description',text='Each profile stores its own appearance.'}}}}
 local panel = app:Options({
     title = ADDON,
+    footer = app.version,
     header = {width=44, create=createFontSample},
     layout = {fieldWidth=220, minLabelWidth=160},
     pages = {{ id = 'appearance', label = 'Appearance', sections = {{
