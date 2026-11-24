@@ -1,6 +1,7 @@
-"""Fail when package version, embedded load order or documented local links drift."""
+"""Check release versions, embedded load order and documented local links."""
 from pathlib import Path
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[1]
@@ -11,6 +12,11 @@ assert 'Version 2.0, January 2004' in (root / 'LICENSE').read_text()
 version = re.search(r'VERSION = "([^"]+)"', (root / 'src/Core.lua').read_text()).group(1)
 assert version == meta['version'], 'runtime/package version drift'
 assert (root / 'API.md').read_text().splitlines()[0] == '# SomethingNeedDoing API — ' + version, 'API/package version drift'
+latest = re.search(r'^## (.+)$', (root / 'CHANGELOG.md').read_text(), re.M)
+assert latest and latest[1] == version, 'latest changelog/package version drift'
+tag = os.environ.get('GITHUB_REF_NAME', '')
+if os.environ.get('GITHUB_REF_TYPE') == 'tag' and tag.startswith('v'):
+    assert tag == 'v' + version, f'release tag {tag} does not match package version {version}'
 load_order = [node.attrib['file'].replace('\\', '/') for node in ET.parse(root / 'Embed.xml').getroot()]
 assert load_order == meta['snd']['loadOrder'], 'XML/package load order drift'
 for path in load_order:

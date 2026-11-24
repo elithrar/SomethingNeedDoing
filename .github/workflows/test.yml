@@ -48,6 +48,12 @@ jobs:
           ref: f4f7adc7040fa9467e7df10996abd89f2ac0ed57
           path: AsTheCrowFlies
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: elithrar/SpellStats
+          ref: 0f342e6e6658faccb0ea27a41ce8ce98b82cb739
+          path: SpellStats
+          persist-credentials: false
       - name: Install Lua 5.1
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Exercise pinned consumer domain modules

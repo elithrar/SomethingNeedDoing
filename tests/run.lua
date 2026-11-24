@@ -65,10 +65,82 @@ test('settings restoration','reads after ADDON_LOADED and preserves unrecognized
     boot(a);assert(a:IsReady() and a:Get('scale')==1)
     local ok,e=a:Set('scale',1.2);assert(not ok and e.code=='readOnly');assert(_G[a.name..'DB'].unknown[1]==7)
     local corrupt=app(basic);_G[corrupt.name..'DB']=false;boot(corrupt);assert(corrupt:IsReady() and not corrupt:Set('scale',1.2) and _G[corrupt.name..'DB']==false)
-    local b=app(basic);_G[b.name..'DB']={version=1,values={scale=1.5,font='Game tooltip',color={1,1,1},enabled=true}}
+    local b=app(basic)
+    local global=b.name..'DB'
+    _G[global]={version=1,lastImport={source='manual'},values={scale=1.5,font='Game tooltip',color={1,1,1},enabled=true,legacy=false}}
     boot(b);assert(b:Get('scale')==1.5)
     local seen=0;b:Scope():Watch(b:SelectSettings(function(values)return values.scale end),function(value)assert(value==_G[b.name..'DB'].values.scale);seen=seen+1 end)
     assert(b:Set('scale',1.6));assert(seen==2);assert(not b:Set('scale',4));assert(b:Get('scale')==1.6)
+    local reload=app(function()return basic(b.name)end);boot(reload)
+    assert(reload:Get('scale')==1.6 and _G[global].lastImport.source=='manual' and _G[global].values.legacy==false)
+    assert(reload:SetMany({enabled=false,scale=1.8}) and reload.profiles:Reset())
+    assert(reload:Get('scale')==1 and reload:Get('enabled') and _G[global].lastImport.source=='manual' and _G[global].values.legacy==false)
+end)
+
+test('saved global limits round trip','every tree accepted for saving can be restored with the same size and depth limits',function()
+    local names={'SNDTestLargeHistory','SNDTestDeepSetting'}
+    local history,deep={},{}
+    for i=1,20000 do history[i]=i end
+    local leaf=deep
+    for i=2,32 do leaf.next={};leaf=leaf.next end
+    leaf.marker='complete'
+    local function result(value,first,second)
+        return true,{state={values={value=value}},saved={[names[1]]=first,[names[2]]=second}}
+    end
+    local adapter={}
+    function adapter:Restore(saved)
+        local first=saved[names[1]] or {}
+        return result(first[1] or 0,first,saved[names[2]] or {})
+    end
+    function adapter:Prepare(_,op)
+        history[1]=op.value
+        return result(op.value,history,deep)
+    end
+    local function session()
+        local a=app(function()return {fields={value={type='integer',default=0}},savedVariables=names,adapter=adapter}end)
+        boot(a)
+        return a
+    end
+    local writer=session()
+    assert(writer:Set('value',7))
+    writer._frame.scripts.OnEvent(writer._frame,'PLAYER_LOGOUT')
+    local reader=session()
+    assert(reader:IsReady() and reader:Get('value')==7 and #_G[names[1]]==20000)
+    local restored=_G[names[2]]
+    for i=2,32 do restored=restored.next end
+    assert(restored.marker=='complete')
+
+    local first,second=_G[names[1]],_G[names[2]]
+    for _,limit in ipairs({'entries','depth'})do
+        if limit=='entries' then history[20001]=1 else leaf.next={} end
+        assert(not reader:Set('value',8) and reader:Get('value')==7)
+        assert(_G[names[1]]==first and _G[names[2]]==second)
+        _G[names[1]],_G[names[2]]=history,deep
+        assert(not session():IsReady() and _G[names[1]]==history and _G[names[2]]==deep)
+        _G[names[1]],_G[names[2]]=first,second
+        history[20001],leaf.next=nil,nil
+    end
+end)
+
+test('nested profile defaults','a malformed inactive profile must not be normalized over a saved scalar',function()
+    local a=app(function(name)return {savedVariables={name..'DB'},fields={['position.x']={type='number',default=10},
+        enabled={type='boolean',default=true}}}end)
+    local db={version=1,active='Default',profiles={Default={enabled=false,position={x=3}},Travel={position=false}}}
+    _G[a.name..'DB']=db;boot(a)
+    assert(not a:IsReady() and _G[a.name..'DB']==db and db.profiles.Travel.position==false)
+    assert(db.profiles.Travel.enabled==nil and db.profiles.Default.enabled==false and db.profiles.Default.position.x==3)
+    db.profiles.Travel.position=nil
+    boot(a)
+    assert(a:IsReady() and a:Get('enabled')==false and a:Get('position.x')==3)
+    assert(a.profiles:Switch('Travel') and a:Get('position.x')==10 and a:Get('enabled')==true)
+
+    local example=app(function(name)return {savedVariables={name..'DB'},adapter=examples.CreateSettingsAdapter(name..'DB'),
+        fields={['position.x']={type='number',default=10},enabled={type='boolean',default=true}}}end)
+    local flat={version=1,values={position=false,enabled=false}}
+    _G[example.name..'DB']=flat;boot(example)
+    assert(not example:IsReady() and _G[example.name..'DB']==flat and flat.values.position==false)
+    flat.values.position=nil;boot(example)
+    assert(example:IsReady() and example:Get('position.x')==10 and example:Get('enabled')==false)
 end)
 
 test('adapter atomicity','an invalid staged result cannot mutate live settings or partially replace multiple globals',function()
@@ -90,6 +162,44 @@ test('scope scheduling and hooks','bounds timer replacement and native hook rete
     local guard=scope:Guard(function()calls=calls+1 end);scope:Cancel();guard();assert(calls==7)
 end)
 
+test('timer dispatch order','a changing timer set defers additions and skips canceled peers while steady frames reuse their order',function()
+    local a,sdk=app();boot(a)
+    local scope=a:Scope()
+    local calls,intervals={},{}
+    local canceled
+    scope:After(0,'first',function()
+        calls[#calls+1]='first'
+        scope:After(0,'replace',function()calls[#calls+1]='replacement' end)
+        canceled:Cancel()
+    end)
+    local driver=a._frame:GetScript('OnUpdate')
+    scope:After(0,'replace',function()calls[#calls+1]='obsolete' end)
+    local ok
+    ok,canceled=scope:After(0,'cancel',function()calls[#calls+1]='canceled' end)
+    assert(ok)
+    local scheduled,pulse=scope:Every(.25,'pulse',function(elapsed)
+        calls[#calls+1]='pulse';intervals[#intervals+1]=elapsed
+    end)
+    assert(scheduled and a._frame:GetScript('OnUpdate')==driver)
+    W.tick(.25)
+    assert(table.concat(calls,',')=='first,pulse')
+    W.tick(.5)
+    assert(table.concat(calls,',')=='first,pulse,pulse,replacement' and intervals[2]==.5)
+
+    W.tick(.125) -- The one-shot has fired. Only the recurring timer remains.
+    local snapshots,snapshot=0,sdk._.snapshot
+    sdk._.snapshot=function(set)snapshots=snapshots+1;return snapshot(set)end
+    W.tick(.125);W.tick(.25)
+    sdk._.snapshot=snapshot
+    assert(snapshots==0 and #intervals==4 and intervals[3]==.25 and intervals[4]==.25)
+    pulse:Cancel()
+    assert(not a._frame:GetScript('OnUpdate'))
+    scope:After(0,'restart',function()calls[#calls+1]='restart' end)
+    assert(a._frame:GetScript('OnUpdate')==driver)
+    W.tick(.125)
+    assert(calls[#calls]=='restart' and not a._frame:GetScript('OnUpdate'))
+end)
+
 test('options editor ownership','rejects stale color callbacks and respects native hide-before-accept ordering',function()
     local a=app(basic);local panel=a:Options({pages={{id='appearance',sections={{title='Color',controls={{type='color',key='color',label='Color'}}}}}}})
     boot(a);assert(panel:Open());local button=panel._pool['appearance:1:1'];button.scripts.OnClick()
@@ -99,6 +209,46 @@ test('options editor ownership','rejects stale color callbacks and respects nati
     assert(a:Set('scale',1.2));old();assert(a:Get('color')[1]==.3)
     button.scripts.OnClick();W.color(.8,.8,.8,true,true);assert(a:Get('color')[1]==.3)
     panel:Close();assert(panel._view==nil)
+end)
+
+test('shared color picker takeover','a second owner can replace a visible picker without leaving the original preview applied',function()
+    local a=app(basic)
+    local paints={}
+    local panel=a:Options({pages={{id='colors',sections={{controls={{type='color',key='color',label='Tint',
+        preview=function(v)paints[#paints+1]=v[1]end}}}}}}})
+    boot(a);assert(panel:Open())
+    local swatch=panel._pool['colors:1:1']
+    local picker=ColorPickerFrame
+    local nativeHook=hooksecurefunc
+    local unavailable=true
+    local setupHooks=0
+    hooksecurefunc=function(target,method,callback)
+        if target==picker and method=='SetupColorPickerAndShow' then
+            if unavailable then error('picker hook refused') end
+            setupHooks=setupHooks+1
+        end
+        return nativeHook(target,method,callback)
+    end
+    assert(W.click(swatch))
+    assert(not panel._edit and #paints==0)
+    unavailable=false
+    assert(W.click(swatch))
+    W.color(.25,.4,.6)
+    local stale=picker.info
+    assert(paints[#paints]==.25 and a:Get('color')[1]==1)
+    local foreignCalls=0
+    local foreign={r=0,g=.2,b=.4,swatchFunc=function()foreignCalls=foreignCalls+1 end}
+    picker:SetupColorPickerAndShow(foreign)
+    assert(not panel._edit and paints[#paints]==1 and a:Get('color')[1]==1)
+    assert(picker:IsShown() and picker.info==foreign and foreignCalls==1)
+    local restored=#paints
+    stale.swatchFunc();stale.cancelFunc();panel:Close()
+    assert(#paints==restored and picker:IsShown())
+    W.color(.1,.2,.3,true);W.tick(.1)
+    assert(foreignCalls==2 and a:Get('color')[1]==1)
+    assert(panel:Open());assert(W.click(swatch));W.color(.4,.5,.6,true)
+    hooksecurefunc=nativeHook
+    assert(a:Get('color')[1]==.4 and setupHooks==1)
 end)
 
 test('options construction and menu lifetime','failed builds are retryable and settings refresh never rebuilds an open menu',function()
@@ -213,6 +363,48 @@ test('slash registry ownership','registration and disposal must not reassign Bli
     handle:Cancel();assert(registry[id]==nil and _G['SLASH_'..id..'1']==nil)
     assert(SlashCmdList==registry and registry.PVP==native)
     a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT');registry.PVP=nil
+end)
+
+test('imported slash command ownership','cancellation after chat imports a command must release its spelling for reuse and preserve foreign replacements',function()
+    local a=app();boot(a)
+    -- Forever 734f0653, ChatFrameSetup.AddListProxyTable and ChatFrameUtil.ImportListToHash.
+    local proxy,dispatch,names={},{},{}
+    local registry=setmetatable({},{__index=proxy})
+    local env=setmetatable({SlashCmdList=registry,hash_SlashCmdList=dispatch,hash_ChatTypeInfoList=names},{__index=_G})
+    env._G=env
+    env.IsSecureCmd=function(command)return command=='/securefixture' end
+    setfenv(a.Slash,env)
+    local id=a.name:upper()..'_SND_IMPORTED'
+    local alias='SLASH_'..id..'1'
+    local function import()
+        local command=env[alias]:upper()
+        local handler=assert(rawget(registry,id))
+        dispatch[command],names[command],proxy[id]=handler,id,handler
+        registry[id]=nil
+    end
+    local received
+    local available,collision=a:Slash('/securefixture',function()end)
+    assert(not available and collision.code=='collision')
+    local ok,first=a:Slash('/imported',function(text)received=text end);assert(ok)
+    import()
+    local cached=dispatch['/IMPORTED'];cached('first');assert(received=='first')
+    first:Cancel();cached('obsolete')
+    assert(received=='first' and #a.log:Entries()==0)
+    assert(not registry[id] and not env[alias] and not dispatch['/IMPORTED'] and not names['/IMPORTED'])
+    local second;ok,second=a:Slash('/imported',function(text)received=text end);assert(ok)
+    import();dispatch['/IMPORTED']('second');assert(received=='second')
+    -- Another add-on replaces the dispatch and the pending registry entry before cancellation.
+    local foreign=function()end
+    dispatch['/IMPORTED'],names['/IMPORTED'],registry[id]=foreign,'OTHER',foreign
+    second:Cancel()
+    assert(dispatch['/IMPORTED']==foreign and names['/IMPORTED']=='OTHER' and env[alias]=='/imported')
+    assert(registry[id]==foreign and not proxy[id])
+    registry[id],env[alias]=nil,nil
+    local err;ok,err=a:Slash('/imported',function()end);assert(not ok and err.code=='collision')
+    dispatch['/IMPORTED'],names['/IMPORTED']=nil,nil
+    assert(a:Slash('/imported',function()error('after logout')end));import()
+    W.event('PLAYER_LOGOUT')
+    assert(not dispatch['/IMPORTED'] and not names['/IMPORTED'] and not registry[id] and not env[alias])
 end)
 
 test('slash registry unavailable','missing native infrastructure must not be synthesized or partially registered',function()
@@ -578,6 +770,41 @@ test('rejected slider write','an adapter rejection restores the moved thumb befo
     assert(attempts==2,'restoring native positions cannot submit another write')
     editable:SetValue(1.2)
     assert(attempts==3 and a:Get('scale')==1.2 and plain:GetValue()==1.2 and label:GetText()=='120%')
+    panel:Close()
+end)
+
+test('native settings controls follow adapter decisions','a rejected checkbox or a normalized slider must show the saved value and accept the next gesture',function()
+    local attempts=0
+    local a=app(function(name)
+        local declaration=basic(name)
+        local prepare=declaration.adapter.Prepare
+        function declaration.adapter:Prepare(state,operation,fields)
+            attempts=attempts+1
+            if operation.path=='enabled' and attempts==1 then return false,{code='rejected'} end
+            if operation.path=='scale' then operation.value=math.floor(operation.value*2)/2 end
+            return prepare(self,state,operation,fields)
+        end
+        return declaration
+    end)
+    local panel=a:Options({pages={{id='display',sections={{controls={
+        {type='checkbox',id='enabled',key='enabled',label='Enable'},
+        {type='slider',id='scale',key='scale',label='Scale',step=.1,editable=true},
+    }}}}}})
+    boot(a);assert(panel:Open())
+    local check,slider=panel._pool['display:1:enabled'],panel._pool['display:1:scale']
+    local entry=panel._pool['display:1:scale:value']
+    local function clickCheck()
+        check:SetChecked(not check:GetChecked()) -- native check buttons toggle before OnClick
+        assert(W.click(check))
+    end
+    clickCheck()
+    assert(attempts==1 and check:GetChecked() and a:Get('enabled') and _G[a.name..'DB'].values.enabled)
+    clickCheck()
+    assert(attempts==2 and not check:GetChecked() and not a:Get('enabled') and not _G[a.name..'DB'].values.enabled)
+    slider:SetValue(1.2)
+    assert(attempts==3 and slider:GetValue()==1 and entry:GetText()=='1' and a:Get('scale')==1)
+    slider:SetValue(1.7)
+    assert(attempts==4 and slider:GetValue()==1.5 and entry:GetText()=='1.5' and _G[a.name..'DB'].values.scale==1.5)
     panel:Close()
 end)
 
@@ -979,6 +1206,34 @@ test('options navigation and cleanup recovery','tabs replace the page without hi
     local show=panel.frame.Show;panel.frame.Show=function()error('native show failed')end
     assert(not panel:Open());assert(panel._view==nil and not panel._opening)
     panel.frame.Show=show;assert(panel:Open());assert(panel._view.active)
+end)
+
+test('options survive inherited visibility','restoring the game interface rebinds an open preview and controls, while a closed panel stays closed',function()
+    local original=UIParent
+    UIParent=CreateFrame('Frame');UIParent:SetSize(original:GetWidth(),original:GetHeight())
+    local a=app(basic)
+    local host,owner,preview,fail
+    local panel=a:Options({header={width=44,create=function(parent,app,scope)
+        if fail then error('preview unavailable')end
+        assert(not host or host==parent);host,owner=parent,scope
+        return {Refresh=function()preview=app:Get('font')end,Layout=function()return 44 end,Hide=function()preview=nil end}
+    end},pages={{id='first'},{id='display',sections={{controls={{type='font',id='font',key='font'}}}}}}})
+    boot(a);assert(panel:Open('display') and host:IsVisible());local first=owner
+    UIParent:Hide()
+    assert(panel:IsShown() and not panel.frame:IsVisible() and not first.active and not preview)
+    assert(a:Set('font','Arial'));assert(panel:Refresh() and not preview)
+    UIParent:Show()
+    assert(panel._page=='display' and owner~=first and owner.active and host:IsVisible() and preview=='Arial')
+    local menu=panel._menus['display:1:font'];menu:OpenMenu()
+    for _,row in ipairs(menu.root.rows)do if row.value=='Friz Quadrata' then row.choose(row.value)end end
+    menu:CloseMenu();W.tick(.01)
+    assert(a:Get('font')=='Friz Quadrata' and preview=='Friz Quadrata')
+    UIParent:Hide();assert(panel:Close());UIParent:Show()
+    assert(not panel:IsShown() and not owner.active)
+    UIParent:Hide();assert(panel:Open() and panel:IsShown() and not preview)
+    fail=true;UIParent:Show();assert(not panel:IsShown() and not panel._view)
+    fail=false;assert(panel:Open() and host:IsVisible() and preview=='Friz Quadrata')
+    assert(panel:Close() and not owner.active);UIParent=original
 end)
 
 test('equal-value profile replacement','reset/copy/switch must invalidate previews and consumer gestures even without changed fields',function()

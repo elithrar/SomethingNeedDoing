@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.10
+
+### Public API changes
+
+An open options panel now restores its selected page, controls and preview when the game interface reappears. Previously the shell could return with an inactive page. Calling `panel:Open(pageID)` while the interface is hidden remembers the requested page and activates its components on reveal. Calling `panel:Close()` before then cancels the pending open. Signatures and saved data formats are unchanged. No migration is required.
+
+### Internal improvements
+
+- Restore each declared SavedVariables global with the same size and depth limits used to save it. Previously, individually valid globals could prevent the add-on from starting on the next login.
+- Preserve the original profile database when a nested setting encounters a malformed parent, including an explicit `false`.
+- Keep unrelated version 1 data intact when the example settings adapter edits or resets its declared fields.
+- Release a canceled slash command even after Forever has imported it. The same spelling can be registered again, and a saved reference to the old handler stays inert.
+- Show the committed checkbox or slider value after an adapter rejects or normalizes a change.
+- Restore a transient color preview as soon as another add-on takes over the shared color picker.
+- Reuse the timer dispatch order while a set of timers is running. Adding, replacing or canceling a timer still takes effect at the same point in the frame.
+- Exercise SpellStats’ slash command, font-size slider and spell preview in consumer CI. Check release tags against the runtime version and changelog.
+
 ## 0.5.9
 
 ### Public API changes

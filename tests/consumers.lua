@@ -3,11 +3,11 @@
 -- XPIsland 875245207042318e063588c45ac6046860c95af3
 -- FindAnUpgrade c39437fc7545f4d8bc42869f983708ab8899d0b9
 -- AsTheCrowFlies f4f7adc7040fa9467e7df10996abd89f2ac0ed57
--- Three real domain modules with mock controllers/UI, using the production SND runtime.
+-- SpellStats 0f342e6e6658faccb0ea27a41ce8ce98b82cb739
 local W=dofile('tests/wow.lua')
 local examples={};assert(loadfile('examples/SettingsAdapter.lua'))('Examples',examples)
-local function loadAddon(name,files)
-    local ns={};for _,file in ipairs(files)do assert(loadfile('../'..name..'/'..name..'/'..file))(name,ns)end;return ns
+local function loadAddon(name,files,ns)
+    ns=ns or {};for _,file in ipairs(files)do assert(loadfile('../'..name..'/'..name..'/'..file))(name,ns)end;return ns
 end
 local function boot(app)W.event('ADDON_LOADED',app.name)end
 local function factory(name)local sdk=W.load(name);return sdk:NewAddon(name),sdk end
@@ -113,6 +113,41 @@ end
 assert(xp:Get('scale')==1 and atcf:Get('scale')==1 and fau:Get('scale')==1)
 print('PASS ATCF: separate profile layout, stale search suppression, active navigation preservation')
 print('PASS FAU + ATCF: custom page subscription rebinding and hidden idle behavior')
+
+-- SpellStats uses its own Core and renderer with the SND sources under test.
+-- The fixture has no live action buttons; only the header sample is painted.
+local native=getmetatable(UIParent).__index
+function native:SetClipsChildren(enabled) self.clipsChildren=enabled end
+function native:SetShadowColor() end
+function native:SetShadowOffset() end
+function InCombatLockdown() return false end
+GameTooltip={GetOwner=function()return nil end} -- The pointer never enters the sample.
+local priorErrors=#W.errors
+local spell=loadAddon('SpellStats',{'Bars.lua','Core.lua'},{
+    SomethingNeedDoing=W.load('SpellStats'),RefreshPlayerStats=function()end,MaxMana=function()return 5000 end,
+})
+boot(spell.App)
+for id,handler in pairs(SlashCmdList)do
+    if _G['SLASH_'..id..'1']=='/spellstats' then handler('options') end
+end
+local options=spell.App._panel
+assert(options:IsShown() and options._pool.header.spellStatsPreview)
+local sample
+for _,region in ipairs(W.frames)do
+    if region.kind=='FontString' and region:GetText()=='311' then sample=region;break end
+end
+assert(sample and sample:IsVisible() and math.floor(sample.fontSize)==12)
+UIParent:Hide()
+assert(not sample:IsVisible())
+UIParent:Show()
+assert(sample:IsVisible())
+options._pool['display:2:topSize']:SetValue(18)
+W.tick(.01)
+assert(spell.GetSettings().topSize==18 and SpellStatsDB.values.topSize==18)
+assert(math.floor(sample.fontSize)==18 and options._pool['display:2:topSize:value']:GetText()=='18')
+assert(W.click(options._pool.close) and not options:IsShown())
+assert(#W.errors==priorErrors,W.errors[priorErrors+1])
+print('PASS SpellStats: slash options, real header preview, slider edit and saved font size')
 
 -- Two different shutdown responsibilities use the same event contract.
 local checkpoint,stopped

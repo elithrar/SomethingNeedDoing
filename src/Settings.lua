@@ -23,8 +23,14 @@ local function fieldValid(value, field)
 end
 local function put(values,path,value)
     local keys={};for key in path:gmatch('[^.]+')do keys[#keys+1]=key end
-    for index=1,#keys-1 do local key=keys[index];values[key]=values[key] or {};values=values[key]end
+    for index=1,#keys-1 do
+        local key=keys[index]
+        if values[key]==nil then values[key]={} end
+        values=values[key]
+        if type(values)~='table' then return false end
+    end
     values[keys[#keys]]=value
+    return true
 end
 -- Default storage is deliberately small. Existing databases keep their migration adapters.
 local function profileAdapter(global)
@@ -52,7 +58,9 @@ local function profileAdapter(global)
             count=count+1
             if count>32 or not nameValid(name) or not I.plain(values) then return false,I.error('invalid','Malformed profile')end
             for path,field in pairs(fields)do
-                if I.get(values,path)==nil then put(values,path,I.copy(field.default))end
+                if I.get(values,path)==nil and not put(values,path,I.copy(field.default)) then
+                    return false,I.error('invalid','Invalid saved parent for field: '..path)
+                end
                 if not fieldValid(I.get(values,path),field) then return false,I.error('invalid','Invalid saved field: '..path)end
             end
         end
@@ -143,9 +151,10 @@ SND._install[#SND._install + 1] = function(app)
         if not spec then return true end
         local ok, state, saved = I.lock(self, function()
             local restored = {}
-            for _, name in ipairs(spec.savedVariables) do restored[name] = _G[name] end
             -- Saved globals may contain future/legacy data: adapter owns its interpretation.
-            local accepted, result = spec.adapter:Restore(I.copy(restored), I.copy(spec.fields))
+            -- Apply the same per-global size and depth limits used when saving.
+            for _, name in ipairs(spec.savedVariables) do restored[name] = I.copy(_G[name]) end
+            local accepted, result = spec.adapter:Restore(restored, I.copy(spec.fields))
             I.check(type(accepted)=='boolean', 'Restore must return a Result tuple')
             if not accepted then error(I.error('restore', result)) end
             I.check(I.plain(result), 'Restore result must contain state and saved')

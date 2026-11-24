@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.5.9
+# SomethingNeedDoing API — 0.5.10
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on Lua 5.1 and LuaJIT, with pinned consumer-domain checks; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -41,6 +41,8 @@ end)
 | `app:IsReady() -> boolean` | Settings/bootstrap readiness, not player identity, world readiness, or API availability. |
 | `app:Scope(name) -> scope` | Create an active owner for subscriptions and work. Duplicate live names are rejected; a canceled name can be reused with a new identity. |
 | `app:Slash(command, callback) -> ok, subscriptionOrError` | Register an explicit slash command; callback receives the unmodified argument string. Reject collisions rather than overwriting another owner. Return `unavailable` if Blizzard's `SlashCmdList` is absent; never create or reassign that global. |
+
+Canceling a slash subscription releases its spelling for reuse, including after its first use in chat. Calling the old handler after cancellation has no effect.
 
 Settings declarations must happen before restoration. Ordinary scoped subscriptions become active after `OnReady`; internal bootstrap uses its own event owner. On `PLAYER_LOGOUT`, active scoped logout subscribers run once, in registration order, while the app is still ready and committed settings remain readable. Callback errors are reported without preventing subsequent subscribers or disposal. Ordinary cancellation rules still apply. SND then closes editors and cancels owned work, including work scheduled during logout. Recursive or repeated logout delivery is ignored. No checkpoint runs if restoration never succeeded; SND does not invent domain checkpoint policy or promise a disk flush. There is no implicit restart, enable/disable lifecycle, or guarantee that a module is safe merely because `OnReady` ran.
 
@@ -116,6 +118,8 @@ Change records contain `revision`, `reason` (`set`, `patch`, `switch`, `duplicat
 When `adapter` is omitted, exactly one SavedVariables name is required. SND stores `{version=1, active="Default", profiles={Default=values}}`, fills absent declared fields from defaults, and supplies switch, duplicate, copy and reset. Names are unique, 1–48 characters, without leading/trailing whitespace, control characters or pipes; the limit is 32 profiles. Unknown versions are preserved untouched with read-only defaults. Malformed recognized data prevents readiness rather than silently replacing a profile. This default does not bind characters; TOC scope decides which characters share the database.
 
 An existing add-on must retain or provide a migration adapter for its current database; removing `adapter` does not convert an existing schema. The executable starter uses `ExampleProfiles`, a distinct global from the earlier single-table adapter example. SND reads only declared globals after restoration; the adapter owns legacy schema, recovery and character association. Opaque adapter state must include everything needed to stage future operations: do not read live globals or retain mutable aliases inside `Prepare`.
+
+Each declared SavedVariables global has the same plain-data limits on save and restore (32 table levels and 20,000 entries per global). With the default adapter, a missing parent table for a dotted field is created when filling defaults. An existing scalar at that path is malformed data and the original saved profiles are preserved.
 
 ```lua
 local Adapter = {}
@@ -272,7 +276,9 @@ app:Slash("/example", function() options:Toggle() end)
 
 Page IDs are unique within the panel. Explicit control IDs are unique within their section. Both are nonempty strings and preserve punctuation literally, so `size:value` and `size%3Avalue` identify different controls. Pages retain their own scroll offsets. Sections flow with measured labels; omit `section.title` to avoid a heading row. Fields align beside labels when the configured columns fit and stack otherwise. A panel with one page opens directly on its controls. Panels with multiple pages have a tab for each page and underline the active one. On narrow screens, the shell reduces its logical width and reflows fields, sections and tabs; scaling is a fallback only when the minimum shell width or wrapped navigation plus a usable body cannot fit. The header, tabs, and close control stay outside the scrolling body. Construction is retryable and reuses existing frame/text objects; a failed build is never published as a usable panel.
 
-Color controls display the setting label and its saved RGB swatch in the same field column as other inputs (stacked in narrow panels). Clicking the swatch opens the native picker; previews remain transient.
+An options page releases its subscriptions when the game interface is hidden. When the interface reappears, a shell that is still open reactivates its selected page and header preview. Calling `Open(pageID)` while the interface is hidden selects the page for the next reveal. Calling `Close()` while hidden keeps the shell closed.
+
+Color controls display the setting label and its saved RGB swatch in the same field column as other inputs (stacked in narrow panels). Clicking the swatch opens the native picker. A preview is transient and returns to its original value if another add-on takes over the picker.
 
 Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `color`, `button`, and `description`. Bound controls declare `key`; labels, hints, units, menu choices (`choices = { { label = ..., value = ... } }`), and button `action(app)` callbacks come from the consumer. Numeric bounds come from the field schema; sliders display their formatted value beside the track. Formatting preserves the stored units. `enabled(app)` and `visible(app)` are pure predicates. Reset/copy confirmation is supplied by the profile page, not by silently changing model semantics. You may assign ordinary `sections` to the table returned by `SND.Pages.Profiles()`; these render below its built-in commands. Existing declarations need no migration.
 
@@ -465,7 +471,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Verification and remaining integration gates
 
-The implementation is covered by [focused contract tests](tests/run.lua), each with an explicit failure-risk justification, on Lua 5.1 and LuaJIT in CI. [Consumer checks](tests/consumers.lua) load domain modules from three commit-pinned sibling sources in CI. Those checks use fixture adapters/controllers and do not replace the shipping add-ons' complete suites or establish native UI compatibility.
+The [focused contract tests](tests/run.lua) run on Lua 5.1 and LuaJIT in CI. The [consumer checks](tests/consumers.lua) load pinned modules from XPIsland, FindAnUpgrade and AsTheCrowFlies. They also boot SpellStats with SND, open its options from chat and change the font size on its spell preview. Frames and player inputs use offline fixtures.
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 

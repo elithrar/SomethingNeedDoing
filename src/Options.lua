@@ -177,25 +177,39 @@ SND._install[#SND._install + 1] = function(app)
         end
         local function color(control)
             local picker=ColorPickerFrame
-            if not picker or not picker.SetupColorPickerAndShow then return report(false,I.error('unavailable')) end
+            if not picker or not picker.SetupColorPickerAndShow or not picker.GetExtraInfo then return report(false,I.error('unavailable')) end
             panel:_cancelEditors()
-            local _,revision=app._settingsStore:Read()
-            local edit={original=app:Get(control.key),revision=revision,preview=control.preview,opening=true};panel._edit=edit
-            local function owns() return panel._edit==edit and picker:GetExtraInfo()==edit end
-            local function cancel()
-                if not owns() then return end
+            local function pickerOwns(edit)
+                local marker=picker:GetExtraInfo()
+                return SND.Values.Readable(marker) and rawequal(marker,edit)
+            end
+            local function restore(edit)
                 panel._edit=nil;if edit.preview then I.call(app,edit.preview,I.copy(edit.original)) end
             end
             if not panel._pickerHook then
-                local hooked, hook=app._system:HookScript(picker,'OnHide',function()
+                local owner=app:Scope()
+                local hooked, hook=owner:HookScript(picker,'OnHide',function()
                     local hidden=panel._edit
-                    app._system:After(0,'picker-hidden',function()
-                        if panel._edit==hidden and hidden and not picker:IsShown() then panel:_cancelEditors(true) end
+                    if not hidden then return end
+                    owner:After(0,'picker-hidden',function()
+                        if panel._edit==hidden and not picker:IsShown() then panel:_cancelEditors(true) end
                     end)
                 end)
-                if not hooked then panel._edit=nil;return report(false,hook)end
-                panel._pickerHook=hook
+                if hooked then
+                    -- Setup replaces the callback and extraInfo even if the
+                    -- singleton is already shown and never fires OnHide.
+                    hooked,hook=owner:PostHook(picker,'SetupColorPickerAndShow',function()
+                        local displaced=panel._edit
+                        if displaced and not pickerOwns(displaced) then restore(displaced) end
+                    end)
+                end
+                if not hooked then owner:Cancel();return report(false,hook)end
+                panel._pickerHook=owner
             end
+            local _,revision=app._settingsStore:Read()
+            local edit={original=app:Get(control.key),revision=revision,preview=control.preview,opening=true};panel._edit=edit
+            local function owns() return panel._edit==edit and pickerOwns(edit) end
+            local function cancel() if owns() then restore(edit) end end
             picker:SetupColorPickerAndShow({r=edit.original[1],g=edit.original[2],b=edit.original[3],hasOpacity=false,extraInfo=edit,
                 swatchFunc=function()
                     if not owns() then return end
@@ -366,9 +380,13 @@ SND._install[#SND._install + 1] = function(app)
                 if panel._refreshing then return end
                 local ok,err=app:Set(c.key,value)
                 report(ok,err)
-                -- A rejected write sends no settings notification. Restore the
-                -- thumb that the native slider already moved during this gesture.
-                if not ok and kind=='slider' then panel:Refresh() end
+                -- These controls move before their native callback. An adapter
+                -- can reject the gesture or normalize it to the existing value
+                -- without sending the settings notification that repaints them.
+                if kind=='checkbox' and widget:GetChecked()~=app:Get(c.key)
+                    or kind=='slider' and widget:GetValue()~=app:Get(c.key) then
+                    panel:Refresh()
+                end
             end
             if kind=='custom' then
                 return customComponent(id,parent,c,width)
@@ -440,7 +458,12 @@ SND._install[#SND._install + 1] = function(app)
             local f=self._pool.shell;self.frame=f;f:Hide()
             f:SetSize(spec.width or 640,spec.height or 500);f:SetPoint('CENTER');f:SetFrameStrata('DIALOG');f:EnableMouse(true);f:SetMovable(true);f:RegisterForDrag('LeftButton')
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
-            f:SetScript('OnHide',function()if not self._closing then self:_deactivate()end end);requireResource(app.ui:Style(f,'dialog'))
+            f:SetScript('OnHide',function()if not self._closing then self:_deactivate()end end)
+            f:SetScript('OnShow',function()
+                -- UIParent can hide and reveal a still-shown options shell.
+                if app._ready and not self._opening and not self._view then report(self:Open())end
+            end)
+            requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading',{size=18});title:SetPoint('TOPLEFT',16,-16)
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-50);scroll:SetPoint('BOTTOMRIGHT',-16,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
@@ -612,7 +635,7 @@ SND._install[#SND._install + 1] = function(app)
             return headerBottom+height+12
         end
         function panel:Refresh()
-            if not self:IsShown() then return true end
+            if not self._view or not self:IsShown() then return true end
             if self._refreshing then self._refreshAgain=true;return true end
             if self:_menuOpen() then self._refreshPending=true;return true end
             self._refreshPending=nil
@@ -684,6 +707,10 @@ SND._install[#SND._install + 1] = function(app)
                 self:_deactivate()
                 if self:_menuOpen()then return false,I.error('build','Options menu could not be closed')end
                 if pageID then self._page=pageID end
+                if not self.frame:GetParent():IsVisible() then
+                    self.frame:Show() -- Its inherited OnShow will activate the requested page.
+                    return true
+                end
                 local owner=app:Scope();self._view=owner
                 if not self.frame:IsShown()then self.frame:Show()end
                 if self._view~=owner or not self.frame:IsShown()then return false,I.error('build','Options hidden during opening')end

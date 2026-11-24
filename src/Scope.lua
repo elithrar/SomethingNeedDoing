@@ -5,28 +5,38 @@ local hooks = setmetatable({}, { __mode = 'k' })
 local globalHooks = {}
 SND._install[#SND._install + 1] = function(app)
     local events, tasks = {}, {}
+    local orderedTasks
+    local function updateTimers(_, elapsed)
+        if not orderedTasks then orderedTasks = I.snapshot(tasks) end
+        -- The iterator keeps this frame's order if a callback changes the set.
+        for _, timer in ipairs(orderedTasks) do
+            local task = tasks[timer]
+            if task then
+                task.remaining = task.remaining - elapsed
+                task.elapsed = task.elapsed + elapsed
+                if task.remaining <= 0 then timer._fire(task) end
+            end
+        end
+    end
     local function schedule(scope, seconds, key, callback, repeating)
         I.check(scope.active and type(callback) == 'function', 'invalid timer owner/callback')
         if not V.Number(seconds) or seconds < 0 or (repeating and seconds == 0) then return false, I.error('invalid', 'invalid timer interval') end
         I.check(V.Readable(key) and (type(key)=='string' or type(key)=='table' or V.Number(key)), 'timer key must be a string, finite number or identity table')
         if scope._timers[key] then scope._timers[key]:Cancel() end
         local h
-        h = I.handle(scope, function() tasks[h] = nil; app._pending[h] = nil; h._start = nil; callback = nil
+        h = I.handle(scope, function()
+            if tasks[h] then
+                tasks[h], orderedTasks = nil, nil
+                if not next(tasks) then app._frame:SetScript('OnUpdate', nil) end
+            end
+            app._pending[h] = nil; h._start = nil; callback = nil
             if scope._timers[key] == h then scope._timers[key] = nil end
-            if not next(tasks) and app._frame then app._frame:SetScript('OnUpdate', nil) end
         end)
         scope._timers[key] = h
         I.activate(app, h, function()
+            if not next(tasks) then app._frame:SetScript('OnUpdate', updateTimers) end
             tasks[h] = { remaining = seconds, elapsed = 0 }
-            app._frame:SetScript('OnUpdate', function(_, elapsed)
-                for _, timer in ipairs(I.snapshot(tasks)) do
-                    local task = tasks[timer]
-                    if task then
-                        task.remaining = task.remaining - elapsed; task.elapsed = task.elapsed + elapsed
-                        if task.remaining <= 0 then timer._fire(task) end
-                    end
-                end
-            end)
+            orderedTasks = nil
         end)
         h._fire = function(task)
             if not h.active then return end
@@ -123,17 +133,32 @@ SND._install[#SND._install + 1] = function(app)
         -- native chat dispatch; register only our entries in the existing table.
         local commands = SlashCmdList
         if type(commands) ~= 'table' then return false, I.error('unavailable', 'slash command registry unavailable') end
+        local upper = command:upper()
+        local dispatch, names = hash_SlashCmdList, hash_ChatTypeInfoList
+        if (IsSecureCmd and IsSecureCmd(command)) or (type(dispatch)=='table' and dispatch[upper])
+            or (type(names)=='table' and names[upper]) then return false, I.error('collision') end
         for key, value in pairs(_G) do
             if type(key) == 'string' and key:match('^SLASH_.+%d+$') and type(value) == 'string' and value:lower() == command then return false, I.error('collision') end
         end
         local id = self.name:gsub('[^%w]', '_'):upper() .. '_SND_' .. command:sub(2):upper()
-        if commands[id] then return false, I.error('collision') end
-        _G['SLASH_' .. id .. '1'] = command
-        local handler = function(text) if self._ready then I.call(self, callback, text) end end
+        local alias = 'SLASH_' .. id .. '1'
+        if commands[id] or _G[alias] then return false, I.error('collision') end
+        _G[alias] = command
+        local handler = function(text) if self._ready and callback then I.call(self, callback, text) end end
         commands[id] = handler
         local subscription = I.handle(self, function()
-            if commands[id] == handler then commands[id] = nil; _G['SLASH_' .. id .. '1'] = nil end
             callback = nil
+            if commands[id]==handler and _G[alias]==command then _G[alias]=nil end
+            if rawget(commands,id)==handler then commands[id]=nil end
+            -- Forever moves imported handlers into a lookup proxy and its
+            -- public dispatch hash. A new handler can already be pending.
+            local meta=getmetatable(commands)
+            local proxy=type(meta)=='table' and rawget(meta,'__index')
+            if type(proxy)=='table' and rawget(proxy,id)==handler then proxy[id]=nil end
+            if type(dispatch)=='table' and dispatch[upper]==handler then
+                dispatch[upper]=nil
+                if type(names)=='table' and names[upper]==id then names[upper]=nil end
+            end
         end)
         return true, subscription
     end

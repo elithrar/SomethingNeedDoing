@@ -28,7 +28,7 @@ local preview
 local function paint(color)
     if preview then preview:SetBackdropColor(unpack(color)) end
 end
--- The factory receives the same host when SND shows the sample again.
+-- The same host is reused after the page or the whole game interface is shown again.
 local function createFontSample(parent, app)
     local sample = parent.fontSample
     if not sample then

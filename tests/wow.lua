@@ -5,6 +5,8 @@ SlashCmdList = {}
 local methods={}
 local function object(kind,parent)
     local f={kind=kind,parent=parent,scripts={},events={},shown=true,width=100,height=24,scale=1,left=0,bottom=0,text='',enabled=true}
+    f.children={};f.visible=not parent or parent:IsVisible()
+    if parent then parent.children[#parent.children+1]=f end
     setmetatable(f,{__index=methods});W.frames[#W.frames+1]=f;return f
 end
 function CreateFrame(kind,name,parent,template)
@@ -74,9 +76,18 @@ end
 function methods:UnregisterEvent(event)self.events[event]=nil end
 function methods:UnregisterAllEvents()self.events={}end
 function methods:GetParent()return self.parent end
-function methods:Show()if not self.shown then self.shown=true;if self.scripts.OnShow then self.scripts.OnShow(self)end end end
-function methods:Hide()if self.shown then self.shown=false;if self.scripts.OnHide then self.scripts.OnHide(self)end end end
 function methods:IsShown()return self.shown end
+function methods:IsVisible()return self.shown and (not self.parent or self.parent:IsVisible())end
+local function updateVisibility(frame)
+    local visible=frame:IsVisible()
+    if frame.visible==visible then return end
+    frame.visible=visible
+    local script=frame.scripts[visible and 'OnShow' or 'OnHide']
+    if script then script(frame)end
+    for _,child in ipairs(frame.children)do updateVisibility(child)end
+end
+function methods:Show()if not self.shown then self.shown=true;updateVisibility(self)end end
+function methods:Hide()if self.shown then self.shown=false;updateVisibility(self)end end
 function methods:SetShown(value)if value then self:Show()else self:Hide()end end
 function methods:SetSize(w,h)self.width,self.height=w,h end
 function methods:SetWidth(w)self.width=w end

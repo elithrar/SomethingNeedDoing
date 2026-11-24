@@ -71,6 +71,9 @@ end)
 if not registered then app.log:Warn(err.message) end
 ```
 
+Hiding the game interface pauses the options page and its preview. Showing the
+interface again restores the selected page unless the panel was closed.
+
 Slash registration uses Blizzard's existing command registry. It returns an
 `unavailable` Result if that registry is missing; it never creates or replaces it.
 
@@ -147,9 +150,10 @@ python3 tools/check.py
 lua5.1 tests/run.lua
 ```
 
-CI runs the contracts on both Lua 5.1 and LuaJIT, plus consumer domain checks
-against pinned XPIsland, FindAnUpgrade and AsTheCrowFlies revisions. With those
-repositories checked out as siblings, run `lua5.1 tests/consumers.lua` locally.
+CI runs the contracts on both Lua 5.1 and LuaJIT. Consumer checks exercise
+pinned XPIsland, FindAnUpgrade and AsTheCrowFlies modules and open SpellStats
+options through its slash command. With those four repositories checked out
+as siblings, run `lua5.1 tests/consumers.lua` locally.
 These are offline logic/lifecycle checks; native rendering, input, combat/taint
 and in-game performance still need the Forever client.
 
