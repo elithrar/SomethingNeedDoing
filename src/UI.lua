@@ -4,6 +4,17 @@ local edges = {
     default='Interface\\Tooltips\\UI-Tooltip-Border', thin='Interface\\Buttons\\WHITE8X8',
     tooltip='Interface\\Tooltips\\UI-Tooltip-Border', dialog='Interface\\DialogFrame\\UI-DialogBox-Border',
 }
+-- Forever's Backdrop.lua specifies the 32px dialog corners and their fill
+-- insets. A smaller edge or a dark tint flattens the engraved highlights.
+local gameDialog = {
+    bgFile='Interface\\DialogFrame\\UI-DialogBox-Background-Dark', edgeFile=edges.dialog,
+    tile=true, tileEdge=true, tileSize=32, edgeSize=32,
+    insets={left=11,right=12,top=12,bottom=11},
+}
+local gameControl = {
+    bgFile='Interface\\Buttons\\WHITE8X8', edgeFile=edges.tooltip, edgeSize=8,
+    insets={left=2,right=2,top=2,bottom=2},
+}
 local roles = { dialog=true, section=true, button=true, tab=true, input=true, dropdown=true, checkbox=true, slider=true, scrollbar=true }
 local controls = {dropdown=true,checkbox=true,slider=true,scrollbar=true}
 local function nativeObject(value)
@@ -34,6 +45,9 @@ SND.Themes = {
     modern = { label='Modern', colors={surface={.035,.04,.055,.97},border={.19,.20,.23,1},accent={.86,.79,.63,1},text={.93,.94,.97,1},muted={.65,.65,.68,1}}, border='thin' },
     forever = { label='WoW Forever', colors={surface={.08,.065,.045,.97},border={.57,.44,.25,1},accent={.83,.72,.49,1},text={.94,.90,.80,1},muted={.7,.65,.55,1}}, border='dialog' },
 }
+-- Record the preset before copying declarations. A consumer may define a
+-- different theme under the same ID and still own its entire palette.
+local usesGameArtwork = setmetatable({}, {__mode='k'})
 local function themeDefinition(definition)
     I.check(I.plain(definition),'theme must be a plain definition')
     local result=I.copy(definition)
@@ -46,6 +60,9 @@ local function themeDefinition(definition)
         for _,v in ipairs(color)do I.check(V.Number(v) and v>=0 and v<=1,'theme color must be in [0,1]')end
     end
     I.check(result.tokens==nil or I.plain(result.tokens),'theme tokens must be plain data')
+    if definition == SND.Themes.forever or I.equal(result,SND.Themes.forever) then
+        usesGameArtwork[result] = true
+    end
     return result
 end
 SND._install[#SND._install + 1] = function(app)
@@ -78,20 +95,87 @@ SND._install[#SND._install + 1] = function(app)
         local entries={};for id,definition in pairs(definitions)do entries[#entries+1]={value=id,label=definition.label}end
         table.sort(entries,function(a,b)return a.label<b.label end);return entries
     end
+    local function paintSlider(frame, game, accent, hovered)
+        local art = frame._sndControlArt
+        local thumb = art.thumb
+        if game ~= frame._sndGameSlider then
+            if game then
+                art.railLeft = art.railLeft or frame:CreateTexture(nil,'BACKGROUND')
+                art.railMiddle = art.railMiddle or frame:CreateTexture(nil,'BACKGROUND')
+                art.railRight = art.railRight or frame:CreateTexture(nil,'BACKGROUND')
+                art.railLeft:SetAtlas('Minimal_SliderBar_Left')
+                art.railMiddle:SetAtlas('_Minimal_SliderBar_Middle')
+                art.railRight:SetAtlas('Minimal_SliderBar_Right')
+                art.railLeft:SetSize(6,8)
+                art.railRight:SetSize(6,8)
+                art.railLeft:SetPoint('LEFT',frame,'LEFT',6,0)
+                art.railRight:SetPoint('RIGHT',frame,'RIGHT',-6,0)
+                art.railMiddle:SetHeight(8)
+                art.railMiddle:SetPoint('LEFT',art.railLeft,'RIGHT')
+                art.railMiddle:SetPoint('RIGHT',art.railRight,'LEFT')
+                thumb:SetTexture('Interface\\Buttons\\UI-SliderBar-Button-Horizontal')
+                thumb:SetSize(24,24)
+            else
+                thumb:SetColorTexture(1,1,1,1)
+                thumb:SetSize(10,18)
+            end
+            for _,key in ipairs({'railLeft','railMiddle','railRight'}) do
+                if art[key] then art[key]:SetShown(game) end
+            end
+            frame._sndGameSlider = game
+        end
+        if not game then
+            thumb:SetVertexColor(unpack(accent))
+        elseif hovered then
+            thumb:SetVertexColor(1,1,1)
+        else
+            thumb:SetVertexColor(.94,.91,.84)
+        end
+    end
     local function paint(frame,role)
         if not safeFrame(frame)then return end
         local theme=resolved()
-        local edge=role=='dialog' and theme.border or 'thin'
-        frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8',edgeFile=edges[edge],edgeSize=edge=='thin' and 1 or edge=='dialog' and 16 or 12,
-            insets={left=3,right=3,top=3,bottom=3}})
-        frame:SetBackdropColor(unpack(theme.colors.surface));frame:SetBackdropBorderColor(unpack(theme.colors[styled[frame].hover and (not frame.IsEnabled or frame:IsEnabled()) and 'accent' or 'border']))
+        local game = usesGameArtwork[theme]
+        local record = styled[frame]
+        if game and role=='slider' and frame.GetOrientation and not record.orientationHook then
+            -- Options sets orientation after constructing its control. If a
+            -- consumer disallows method hooks, its current orientation can
+            -- still be drawn and rechecked at the next style refresh.
+            local ok, hook = record.owner:PostHook(frame,'SetOrientation',function()paint(frame,role)end)
+            if ok then record.orientationHook = hook end
+        end
+        local hovered = record.hover and (not frame.IsEnabled or frame:IsEnabled())
+        local edgeColor = theme.colors[hovered and 'accent' or 'border']
+        local gameSlider = game and role=='slider' and (not frame.GetOrientation or frame:GetOrientation()=='HORIZONTAL')
+        if game and role=='dialog' then
+            frame:SetBackdrop(gameDialog)
+            frame:SetBackdropColor(1,.96,.90,.98)
+            frame:SetBackdropBorderColor(.98,.95,.87,1)
+        elseif gameSlider then
+            frame:SetBackdrop(nil)
+        elseif game and (role=='button' or role=='tab' or role=='dropdown' or role=='input' or role=='checkbox') then
+            frame:SetBackdrop(gameControl)
+            frame:SetBackdropColor(.13,.105,.075,.98)
+            frame:SetBackdropBorderColor(unpack(edgeColor))
+        else
+            local edge=role=='dialog' and theme.border or 'thin'
+            frame:SetBackdrop({bgFile='Interface\\Buttons\\WHITE8X8',edgeFile=edges[edge],edgeSize=edge=='thin' and 1 or edge=='dialog' and 16 or 12,
+                insets={left=3,right=3,top=3,bottom=3}})
+            frame:SetBackdropColor(unpack(theme.colors.surface))
+            frame:SetBackdropBorderColor(unpack(edgeColor))
+        end
         if controls[role] then
             local art=frame._sndControlArt
             if role=='dropdown' then
+                frame._sndGameDropdown = game == true
                 frame.Background:Hide();frame.Arrow:Hide()
                 frame.Text:SetTextColor(unpack(theme.colors.text))
             end
-            for _,texture in pairs(art)do texture:SetVertexColor(unpack(theme.colors.accent))end
+            if role=='slider' then
+                paintSlider(frame,gameSlider==true,theme.colors.accent,hovered)
+            else
+                for _,texture in pairs(art)do texture:SetVertexColor(unpack(theme.colors.accent))end
+            end
             frame:SetAlpha(frame:IsEnabled() and 1 or .45)
         end
     end
@@ -172,7 +256,13 @@ SND._install[#SND._install + 1] = function(app)
             end
         end
         record.role=role
-        local ok,err=pcall(function()prepareControl(frame,role);paint(frame,role)end)
+        local ok,err=pcall(function()
+            if role~='slider' and frame._sndGameSlider then
+                paintSlider(frame,false,resolved().colors.accent,false)
+            end
+            prepareControl(frame,role)
+            paint(frame,role)
+        end)
         if not ok then
             if fresh then if record.owner then record.owner:Cancel()end;styled[frame]=nil end
             return false,I.error('unavailable',err)

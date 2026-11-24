@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.6
+
+### Public API changes
+
+Single-page options declarations now open directly on their controls. Panels with multiple pages still show navigation tabs. Existing declarations work without migration.
+
+### Internal improvements
+
+- Give the Forever window its native dialog trim and use game artwork for its slider track and thumb.
+- Left-align dropdown selections in the Forever preset and keep each slider’s formatted value beside its track.
+- Give fitted pages equal side margins and reserve the scrollbar gutter when content overflows.
+
 ## 0.5.5
 
 ### Public API changes

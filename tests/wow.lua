@@ -36,6 +36,7 @@ end
 function CreateFont(name)local f=object('Font');_G[name]=f;return f end
 function methods:CreateTexture()return object('Texture',self)end
 function methods:SetTexture(value)self.texture=value end
+function methods:SetAtlas(asset)self.atlas=asset end
 function methods:SetColorTexture(...)self.color={...}end
 function methods:SetVertexColor(...)self.tint={...}end
 function methods:SetAllPoints(other)self.all=other end
@@ -49,6 +50,7 @@ function methods:RegisterForClicks(...)self.clickButtons={...}end
 function methods:EnableMouse(value)self.mouseEnabled=value end
 function methods:SetAlpha(value)self.alpha=value end
 function methods:SetOrientation(value)self.orientation=value end
+function methods:GetOrientation()return self.orientation or 'VERTICAL' end
 function methods:CreateFontString()return object('FontString',self)end
 function methods:SetScript(name,fn)self.scripts[name]=fn end
 function methods:GetScript(name)return self.scripts[name]end
@@ -77,9 +79,10 @@ function methods:SetScale(scale)self.scale=scale end
 function methods:GetEffectiveScale()return self.scale*(self.parent and self.parent:GetEffectiveScale()or 1)end
 function methods:GetLeft()return self.left end
 function methods:GetBottom()return self.bottom end
-function methods:ClearAllPoints()self.points={}end
+function methods:ClearAllPoints()self.points={};self.anchors={}end
 function methods:SetPoint(...)
     self.points={...}
+    self.anchors=self.anchors or {};self.anchors[self.points[1]]=self.points
     if select(1,...)=='BOTTOMLEFT' and select('#',...)==5 then self.left,self.bottom=select(4,...),select(5,...)end
 end
 function methods:SetBackdrop(value)self.backdrop=value end
@@ -95,6 +98,7 @@ function methods:GetFont()return self.font or 'Fonts\\FRIZQT__.TTF',self.fontSiz
 function methods:SetFontObject(font)self.font,self.fontSize,self.flags=font:GetFont()end
 function methods:SetText(value)self.text=tostring(value or '')end
 function methods:SetTextColor(...)self.textColor={...}end
+function methods:SetJustifyH(justify)self.justifyH=justify end
 function methods:GetText()return self.text end
 function methods:GetStringWidth()return #self.text*7 end
 function methods:GetStringHeight()return math.max(14,math.ceil(#self.text*7/self.width)*14)end
@@ -136,7 +140,7 @@ function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
 function methods:SetFocus()self.focus=true end
 function methods:ClearFocus()self.focus=false end
-for _,name in ipairs({'SetTextInsets','SetFrameStrata','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyH','SetJustifyV'})do methods[name]=function()end end
+for _,name in ipairs({'SetTextInsets','SetFrameStrata','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyV'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)
 GameFontNormal=object('Font');GameTooltipText=object('Font')
 ColorPickerFrame=object('Frame');ColorPickerFrame:Hide()

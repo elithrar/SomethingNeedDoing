@@ -517,7 +517,7 @@ test('compact options presentation','aligned fields, disabled feedback and selec
     }}}},profiles}})
     boot(a);assert(panel:Open())
     local menu=panel._pool['settings:1:font'];local label=panel._texts['settings:1:font:label']
-    assert(menu.points[2]==270 and label.points[2]==0,'field and label use separate columns')
+    assert(menu.points[2]==panel.body:GetWidth()-menu:GetWidth() and label.points[2]==0,'field and label use separate columns')
     assert(not panel._texts['settings:section:1'],'untitled sections must not consume an empty heading row')
     assert(panel._pool['tab:settings']._selected:IsShown() and not panel._pool['tab:profiles']._selected:IsShown())
     assert(a:Set('enabled',false));assert(menu.alpha==.45 and not menu.enabled)
@@ -526,6 +526,101 @@ test('compact options presentation','aligned fields, disabled feedback and selec
     assert(panel:SelectPage('profiles'));assert(panel._pool['profiles:1:extra']:IsShown())
     assert(panel._pool['tab:profiles']._selected:IsShown() and not panel._pool['tab:settings']._selected:IsShown())
     local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
+end)
+
+test('single-page settings shell','a single page recovers its navigation space and preserves the slider value when resized or reopened',function()
+    local a=app(basic)
+    local page={id='display',label='Display',sections={{title='Display options',controls={
+        {type='slider',key='scale',label='Scale',step=.1,format='percent'},
+        {type='font',key='font',label='Font'},
+    }}}}
+    local panel=a:Options({title='Settings',width=520,height=240,pages={page}})
+    boot(a);assert(panel:Open())
+    assert(not panel._pool['tab:display'],'single-page windows do not have a tab strip')
+    assert(panel._texts.title.fontSize>panel._texts['display:section:1'].fontSize)
+    local top=panel.scroll.anchors.TOPLEFT
+    assert(-top[3] >= 10+panel._pool.close:GetHeight() and -top[3] < 70,'viewport starts just below the title and close button')
+    assert(not panel.bar:IsShown() and panel.body:GetWidth()==488,'fitted fields use both margins without a scrollbar gutter')
+    local id='display:1:1'
+    local slider,label,value=panel._pool[id],panel._texts[id..':label'],panel._texts[id..':value']
+    assert(label:GetText()=='Scale' and value and value:GetText()=='100%')
+    local inset=value.anchors.LEFT
+    assert(inset and inset[2]==slider and inset[3]=='RIGHT' and inset[4]>0 and value.justifyH=='RIGHT')
+    local railWidth=slider:GetWidth()
+    slider:SetValue(1.5)
+    assert(a:Get('scale')==1.5 and label:GetText()=='Scale' and value:GetText()=='150%' and slider:GetWidth()==railWidth)
+    local count=#W.frames
+    local oldWidth,oldHeight=UIParent:GetWidth(),UIParent:GetHeight()
+    UIParent:SetSize(260,164);W.event('DISPLAY_SIZE_CHANGED')
+    assert(panel.bar:IsShown() and value:IsShown(),'the slider value remains available on short screens')
+    UIParent:SetSize(oldWidth,oldHeight);W.event('DISPLAY_SIZE_CHANGED')
+    panel:Close();assert(panel:Open() and #W.frames==count and value:IsShown())
+
+    local b=app(basic)
+    local multi=b:Options({title='Settings',width=520,height=240,pages={page,{id='other',label='Other'}}})
+    boot(b);assert(multi:Open())
+    assert(-multi.scroll.anchors.TOPLEFT[3]>=-top[3]+multi._pool['tab:display']:GetHeight())
+    assert(W.click(multi._pool['tab:other']) and multi._page=='other')
+    multi:Close();panel:Close()
+end)
+
+test('Forever native control artwork','the dialog rim, slider track and thumb appear together and release their art when switching themes',function()
+    local a=app(function(name)return {savedVariables={name..'DB'},fields={
+        theme={type='enum',default='forever',values={'modern','forever'}},
+        size={type='integer',default=12,min=8,max=16},
+    }}end)
+    local panel=a:Options({pages={{id='font',sections={{controls={
+        {id='size',type='slider',key='size',label='Font size'},
+        {id='style',type='select',key='theme',label='Style',choices={{value='forever',label='WoW Forever'},{value='modern',label='Modern'}}},
+    }}}}}})
+    boot(a);assert(panel:Open())
+    local slider=panel._pool['font:1:size']
+    local menu=panel._pool['font:1:style']
+    local chrome=panel.frame:GetBackdrop()
+    assert(chrome.edgeFile=='Interface\\DialogFrame\\UI-DialogBox-Border' and chrome.edgeSize==32)
+    assert(chrome.bgFile=='Interface\\DialogFrame\\UI-DialogBox-Background-Dark')
+    assert(chrome.insets.left==11 and chrome.insets.right==12 and chrome.insets.top==12 and chrome.insets.bottom==11)
+    assert(math.min(unpack(panel.frame.border))>.8,'the dialog edge must retain its engraved highlights')
+    assert(menu:GetBackdrop().edgeFile=='Interface\\Tooltips\\UI-Tooltip-Border')
+    assert(menu.Text.justifyH=='LEFT' and menu.Text.anchors.LEFT[4]>0,'text starts inside the field border')
+    local track={}
+    for _,region in ipairs(W.frames) do
+        if region.parent==slider and region.atlas then track[region.atlas]=region end
+    end
+    for _,atlas in ipairs({'Minimal_SliderBar_Left','_Minimal_SliderBar_Middle','Minimal_SliderBar_Right'}) do
+        assert(track[atlas] and track[atlas]:IsShown(),atlas..' must be visible on the slider')
+    end
+    assert(slider.thumb.texture=='Interface\\Buttons\\UI-SliderBar-Button-Horizontal')
+    assert(not slider:GetBackdrop() or not slider:GetBackdrop().edgeFile,'the slider rail must not have a full-size border')
+    slider:SetValue(14);assert(a:Get('size')==14)
+    assert(a:Set('theme','modern'))
+    for _,texture in pairs(track) do assert(not texture:IsShown(),'native rail leaked into Modern') end
+    assert(menu.Text.justifyH=='CENTER' and slider:GetBackdrop().edgeSize==1 and slider:GetValue()==14)
+    assert(slider.thumb:GetWidth()==10 and slider.thumb:GetHeight()==18)
+    local count=#W.frames
+    assert(a:Set('theme','forever') and #W.frames==count)
+    for _,texture in pairs(track) do assert(texture:IsShown(),'reused rail must be visible') end
+    assert(slider.thumb:GetWidth()==24 and slider.thumb:GetHeight()==24)
+    panel:Close()
+
+    -- A missing atlas can fail partway through dressing the three rail pieces.
+    local retry=CreateFrame('Slider',nil,UIParent,'BackdropTemplate')
+    retry:SetOrientation('HORIZONTAL')
+    local create,failed=retry.CreateTexture,false
+    function retry:CreateTexture(...)
+        local texture=create(self,...)
+        local setAtlas=texture.SetAtlas
+        function texture:SetAtlas(atlas)
+            if atlas=='_Minimal_SliderBar_Middle' and not failed then
+                failed=true;error('simulated missing slider atlas')
+            end
+            setAtlas(self,atlas)
+        end
+        return texture
+    end
+    assert(not a.ui:Style(retry,'slider') and failed)
+    count=#W.frames;assert(a.ui:Style(retry,'slider') and #W.frames==count)
+    assert(retry.thumb:GetWidth()==24 and retry._sndControlArt.railMiddle.atlas=='_Minimal_SliderBar_Middle')
 end)
 
 test('shared native control styling','native state changes preserve the palette, failed art creation retries without leaks, and refresh preserves slider gestures',function()

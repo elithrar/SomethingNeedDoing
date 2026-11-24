@@ -61,17 +61,18 @@ SND._install[#SND._install + 1] = function(app)
         local ids={}
         for _, page in ipairs(spec.pages) do I.check(type(page.id)=='string' and not ids[page.id],'duplicate or missing page id');ids[page.id]=true;panel._pages[#panel._pages+1]=page end
         panel._page=spec.pages[1].id
+        local tabs = #panel._pages > 1 and panel._pages or {}
         local function frame(id,kind,parent,template)
             if panel._used then panel._used[id]=true end
             if not panel._pool[id] then panel._pool[id]=CreateFrame(kind,nil,parent,template) end
             return panel._pool[id]
         end
         local function requireResource(ok,err)I.check(ok,type(err)=='table' and err.message or 'UI resource unavailable')end
-        local function text(id,parent,value,role)
+        local function text(id,parent,value,role,fontOptions)
             if panel._usedText then panel._usedText[id]=true end
             local label=panel._texts[id]
             if not label then label=parent:CreateFontString(nil,'OVERLAY','GameTooltipText');panel._texts[id]=label end
-            requireResource(app.fonts:Apply(label,role or 'control'));requireResource(app.ui:Color(label,role=='heading' and 'accent' or role=='muted' and 'muted' or 'text'));label:SetText(value or '');label:SetJustifyH('LEFT');label:Show();return label
+            requireResource(app.fonts:Apply(label,role or 'control',fontOptions));requireResource(app.ui:Color(label,role=='heading' and 'accent' or role=='muted' and 'muted' or 'text'));label:SetText(value or '');label:SetJustifyH('LEFT');label:Show();return label
         end
         local function fitButton(button)
             local label=button.text
@@ -189,7 +190,13 @@ SND._install[#SND._install + 1] = function(app)
                     shortened=shortened:sub(1,last-1);label:SetText(shortened..'...')
                 end
                 dropdown._truncated=shortened~=full
-                label:ClearAllPoints();label:SetPoint('CENTER',dropdown,'CENTER',-4,0);label:SetWidth(available);label:SetHeight(dropdown:GetHeight());label:SetJustifyH('CENTER');label:SetJustifyV('MIDDLE');label:SetWordWrap(false)
+                label:ClearAllPoints()
+                if dropdown._sndGameDropdown then
+                    label:SetPoint('LEFT',dropdown,'LEFT',10,0);label:SetJustifyH('LEFT')
+                else
+                    label:SetPoint('CENTER',dropdown,'CENTER',-4,0);label:SetJustifyH('CENTER')
+                end
+                label:SetWidth(available);label:SetHeight(dropdown:GetHeight());label:SetJustifyV('MIDDLE');label:SetWordWrap(false)
             end)
             dropdown._captioning=nil
             if not ok then error(err,0)end
@@ -242,7 +249,7 @@ SND._install[#SND._install + 1] = function(app)
             for _,entry in ipairs(offered)do if I.equal(entry.value,selected)then label=entry.label;break end end
             d:SetDefaultText(label);caption(d,label);return d
         end
-        local function control(id,parent,c,width)
+        local function control(id,parent,c,width,layout)
             local kind=c.type;local widget,label
             local field=c.key and app._settingsFields and app._settingsFields[c.key]
             if c.key then I.check(field,'control binds unknown field: '..c.key) end
@@ -270,11 +277,19 @@ SND._install[#SND._install + 1] = function(app)
                 label=text(id..':label',parent,c.label)
             elseif kind=='slider' then
                 I.check(field and field.min and field.max,'slider requires bounds')
-                widget=ownedControl(id,parent,'slider');widget:SetSize(math.min(width,260),18);widget:SetOrientation('HORIZONTAL')
+                widget=ownedControl(id,parent,'slider');widget:SetOrientation('HORIZONTAL')
                 widget:SetMinMaxValues(field.min,field.max);widget:SetValueStep(c.step or 1);widget:SetObeyStepOnDrag(true);widget:SetValue(app:Get(c.key))
                 widget:SetScript('OnValueChanged',function(_,value)write(value)end)
                 local value=app:Get(c.key);local formatted=c.format=='percent' and string.format('%g%%',value*100) or type(c.format)=='function' and c.format(value) or tostring(value)
-                label=text(id..':label',parent,c.label..': '..formatted..(c.units and ' '..c.units or ''))
+                label=text(id..':label',parent,c.label)
+                local readout=text(id..':value',parent,formatted..(c.units and ' '..c.units or ''))
+                local fieldWidth=math.min(width, layout.fieldWidth, c.width or layout.fieldWidth)
+                -- Reserve a stable column so crossing a digit boundary during a drag
+                -- does not move the thumb underneath the pointer.
+                readout:SetWidth(math.max(1, math.floor(fieldWidth / 4)))
+                readout:SetHeight(0);readout:SetWordWrap(true);readout:SetJustifyH('RIGHT')
+                readout:ClearAllPoints();readout:SetPoint('LEFT',widget,'RIGHT',8,0)
+                widget:SetHeight(math.max(26,readout:GetStringHeight()))
             elseif kind=='color' then
                 widget=button(id,parent,'',function()color(c)end)
                 label=text(id..':label',parent,c.label)
@@ -292,6 +307,7 @@ SND._install[#SND._install + 1] = function(app)
                 widget:SetEnabled(allowed);widget:SetAlpha(allowed and 1 or .45);widget:Show()
                 if widget.Text then requireResource(app.ui:Color(widget.Text,'text')) end
                 if label then requireResource(app.ui:Color(label,allowed and 'text' or 'muted')) end
+                if kind=='slider' then requireResource(app.ui:Color(panel._texts[id..':value'],allowed and 'accent' or 'muted')) end
             end
             return widget,nil,label
         end
@@ -305,18 +321,18 @@ SND._install[#SND._install + 1] = function(app)
             f:SetSize(spec.width or 640,spec.height or 500);f:SetPoint('CENTER');f:SetFrameStrata('DIALOG');f:EnableMouse(true);f:SetMovable(true);f:RegisterForDrag('LeftButton')
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
             f:SetScript('OnHide',function()if not self._closing then self:_deactivate()end end);requireResource(app.ui:Style(f,'dialog'))
-            local title=text('title',f,spec.title or app.name,'heading');title:SetPoint('TOPLEFT',16,-16)
+            local title=text('title',f,spec.title or app.name,'heading',{size=18});title:SetPoint('TOPLEFT',16,-16)
             local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
-            local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-90);scroll:SetPoint('BOTTOMRIGHT',-44,16)
+            local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-50);scroll:SetPoint('BOTTOMRIGHT',-16,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
-            local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-10,-90);bar:SetPoint('BOTTOMRIGHT',-10,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
+            local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-16,-50);bar:SetPoint('BOTTOMRIGHT',-16,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
             requireResource(app.ui:Style(bar,'scrollbar'));bar._thumb=bar._sndControlArt.thumb
             bar:SetScript('OnValueChanged',function(_,value)
                 if not self._refreshing and value~=(self._offsets[self._page] or 0)then self:_cancelEditors()end
                 scroll:SetVerticalScroll(value);self._offsets[self._page]=value
             end)
             scroll:EnableMouseWheel(true);scroll:SetScript('OnMouseWheel',function(_,delta)bar:SetValue(math.max(0,math.min(self._maximum or 0,(self._offsets[self._page] or 0)-delta*30)))end)
-            for i,page in ipairs(self._pages) do
+            for i,page in ipairs(tabs) do
                 local b=button('tab:'..page.id,f,page.label or page.id,function()report(self:SelectPage(page.id))end)
                 local tabWidth=((spec.width or 640)-32-(#self._pages-1)*4)/#self._pages
                 b:SetSize(tabWidth,26);b:SetPoint('TOPLEFT',16+(i-1)*(tabWidth+4),-50)
@@ -409,6 +425,48 @@ SND._install[#SND._install + 1] = function(app)
             end
             return y
         end
+        function panel:_layoutPage(page,width)
+            self.body:SetWidth(width)
+            self._used,self._usedText={},{}
+            local y=0
+            if page._profiles then y=self:_profiles()+12 end
+            for si,section in ipairs(page.sections or {}) do
+                if section.title then
+                    local label=text(page.id..':section:'..si,self.body,section.title,'heading');label:ClearAllPoints();label:SetWidth(width);label:SetWordWrap(true);label:SetPoint('TOPLEFT',0,-y);y=y+label:GetStringHeight()+10
+                end
+                local columns,columnWidth=app.layout:Columns(width,section.layout)
+                local column,rowHeight=0,0
+                for ci,c in ipairs(section.controls or {}) do
+                    local id=page.id..':'..si..':'..(c.id or ci)
+                    if not c.visible or c.visible(app) then
+                        local widget,height,label=control(id,self.body,c,columnWidth,section.layout)
+                        local x=column*(columnWidth+section.layout.columnGap)
+                        if c.type=='custom' then
+                            widget:ClearAllPoints();widget:SetPoint('TOPLEFT',x,-y)
+                        else
+                            local kind=c.type=='checkbox' and 'check' or c.type=='button' and 'action' or c.type=='description' and 'text' or 'field'
+                            local ok,result=app.layout:Row(self.body,{width=columnWidth,x=x,y=y,kind=kind,
+                                label=kind=='action' and widget.text or label,control=widget,hint=self._texts[id..':hint'],
+                                layout=section.layout,controlWidth=c.width,align=c.align})
+                            requireResource(ok,result);height=result
+                            if c.type=='select' or c.type=='font' then caption(widget,widget._fullCaption)end
+                            if c.type=='slider' then
+                                local value=self._texts[id..':value']
+                                widget:SetWidth(math.max(1,widget:GetWidth()-value:GetWidth()-8))
+                            end
+                        end
+                        rowHeight=math.max(rowHeight,height);column=column+1
+                        if column==columns then y=y+rowHeight;column,rowHeight=0,0 end
+                    elseif self._components[id] then self._components[id]:Hide() end
+                end
+                y=y+rowHeight
+                if si<#page.sections then y=y+12 end
+            end
+            for id,widget in pairs(self._pool)do if widget:GetParent()==self.body and not self._used[id] then widget:Hide()end end
+            for id,label in pairs(self._texts)do if label:GetParent()==self.body and not self._usedText[id] then label:Hide()end end
+            self._used,self._usedText=nil,nil
+            return y
+        end
         function panel:Refresh()
             if not self:IsShown() then return true end
             if self._refreshing then self._refreshAgain=true;return true end
@@ -424,10 +482,10 @@ SND._install[#SND._install + 1] = function(app)
                 self.frame:SetHeight(math.max(140,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
                 fitButton(self._pool.close)
                 local title=self._texts.title;title:SetWidth(frameWidth-76);title:SetHeight(0);title:SetWordWrap(true)
-                local tabY=math.max(50,title:GetStringHeight()+28)
-                local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.min(4,#self._pages),minColumnWidth=110,columnGap=4})
+                local tabY=math.max(48,title:GetStringHeight()+32,self._pool.close:GetHeight()+24)
+                local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.max(1,math.min(4,#tabs)),minColumnWidth=110,columnGap=4})
                 local rowHeight=0
-                for index,p in ipairs(self._pages)do
+                for index,p in ipairs(tabs)do
                     local b=self._pool['tab:'..p.id];b:SetWidth(tabWidth);fitButton(b)
                     rowHeight=math.max(rowHeight,b:GetHeight())
                     if index%count==0 or index==#self._pages then
@@ -439,57 +497,31 @@ SND._install[#SND._install + 1] = function(app)
                         tabY=tabY+rowHeight+4;rowHeight=0
                     end
                 end
-                local bodyTop=tabY+10
+                local bodyTop=#tabs>0 and tabY+10 or tabY
                 -- Reserve a usable body even when wrapped navigation is taller
                 -- than the requested shell. Scale only if that minimum cannot fit.
                 local minimumHeight=bodyTop+64
                 scale=math.min(scale,math.max(.1,(UIParent:GetHeight()-16)/minimumHeight))
                 self.frame:SetScale(scale)
                 self.frame:SetHeight(math.max(minimumHeight,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
-                self.scroll:ClearAllPoints();self.scroll:SetPoint('TOPLEFT',16,-bodyTop);self.scroll:SetPoint('BOTTOMRIGHT',-44,16)
-                self.bar:ClearAllPoints();self.bar:SetPoint('TOPRIGHT',-10,-bodyTop);self.bar:SetPoint('BOTTOMRIGHT',-10,16)
-                local width=frameWidth-60;self.body:SetWidth(width)
-                self._used,self._usedText={},{}
-                local page;for _,p in ipairs(self._pages)do if p.id==self._page then page=p end end
-                local y=0
-                if page._profiles then y=self:_profiles()+12 end
-                for si,section in ipairs(page.sections or {}) do
-                    if section.title then
-                        local label=text(page.id..':section:'..si,self.body,section.title,'heading');label:ClearAllPoints();label:SetWidth(width);label:SetWordWrap(true);label:SetPoint('TOPLEFT',0,-y);y=y+label:GetStringHeight()+10
-                    end
-                    local columns,columnWidth=app.layout:Columns(width,section.layout)
-                    local column,rowHeight=0,0
-                    for ci,c in ipairs(section.controls or {}) do
-                        local id=page.id..':'..si..':'..(c.id or ci)
-                        if not c.visible or c.visible(app) then
-                            local widget,height,label=control(id,self.body,c,columnWidth)
-                            local x=column*(columnWidth+section.layout.columnGap)
-                            if c.type=='custom' then
-                                widget:ClearAllPoints();widget:SetPoint('TOPLEFT',x,-y)
-                            else
-                                local kind=c.type=='checkbox' and 'check' or c.type=='button' and 'action' or c.type=='description' and 'text' or 'field'
-                                local ok,result=app.layout:Row(self.body,{width=columnWidth,x=x,y=y,kind=kind,
-                                    label=kind=='action' and widget.text or label,control=widget,hint=self._texts[id..':hint'],
-                                    layout=section.layout,controlWidth=c.width,align=c.align})
-                                requireResource(ok,result);height=result
-                                if c.type=='select' or c.type=='font' then caption(widget,widget._fullCaption)end
-                            end
-                            rowHeight=math.max(rowHeight,height);column=column+1
-                            if column==columns then y=y+rowHeight;column,rowHeight=0,0 end
-                        elseif self._components[id] then self._components[id]:Hide() end
-                    end
-                    y=y+rowHeight
-                    y=y+12
+                self.scroll:ClearAllPoints();self.scroll:SetPoint('TOPLEFT',16,-bodyTop);self.scroll:SetPoint('BOTTOMRIGHT',-16,16)
+                self.bar:ClearAllPoints();self.bar:SetPoint('TOPRIGHT',-16,-bodyTop);self.bar:SetPoint('BOTTOMRIGHT',-16,16)
+                local viewportHeight=self.frame:GetHeight()-bodyTop-16
+                local page
+                for _,p in ipairs(self._pages)do if p.id==self._page then page=p;break end end
+                local width=frameWidth-32
+                local y=self:_layoutPage(page,width)
+                if y>viewportHeight then
+                    -- Only an overflowing page pays for the scrollbar and its gap.
+                    self.scroll:SetPoint('BOTTOMRIGHT',-32,16)
+                    y=self:_layoutPage(page,width-16)
                 end
-                for id,widget in pairs(self._pool)do if widget:GetParent()==self.body and not self._used[id] then widget:Hide()end end
-                for id,label in pairs(self._texts)do if label:GetParent()==self.body and not self._usedText[id] then label:Hide()end end
-                self._used,self._usedText=nil,nil
-                for _,p in ipairs(self._pages)do
+                for _,p in ipairs(tabs)do
                     local b=self._pool['tab:'..p.id];b._selected:SetShown(p.id==self._page)
                     requireResource(app.ui:Color(b.text,p.id==self._page and 'accent' or 'muted'))
                 end
-                self.body:SetHeight(math.max(1,y));self._maximum=math.max(0,y-self.scroll:GetHeight())
-                self.bar._thumb:SetHeight(math.max(24,self.bar:GetHeight()*math.min(1,self.scroll:GetHeight()/math.max(1,y))))
+                self.body:SetHeight(math.max(1,y));self._maximum=math.max(0,y-viewportHeight)
+                self.bar._thumb:SetHeight(math.max(24,viewportHeight*math.min(1,viewportHeight/math.max(1,y))))
                 self.bar:SetMinMaxValues(0,self._maximum);self.bar:SetValue(math.min(self._maximum,self._offsets[self._page] or 0));self.bar:SetShown(self._maximum>0)
                 if self._keep then self._keep:Refresh() end
             end)
