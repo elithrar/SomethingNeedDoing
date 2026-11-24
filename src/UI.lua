@@ -146,6 +146,7 @@ SND._install[#SND._install + 1] = function(app)
         end
         local hovered = record.hover and (not frame.IsEnabled or frame:IsEnabled())
         local edgeColor = theme.colors[hovered and 'accent' or 'border']
+        if role=='dialog' then frame._sndGameDialog = game == true end
         local gameSlider = game and role=='slider' and (not frame.GetOrientation or frame:GetOrientation()=='HORIZONTAL')
         if game and role=='dialog' then
             frame:SetBackdrop(gameDialog)

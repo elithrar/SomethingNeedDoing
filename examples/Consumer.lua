@@ -28,11 +28,30 @@ local preview
 local function paint(color)
     if preview then preview:SetBackdropColor(unpack(color)) end
 end
+-- The header keeps this sample visible while either page scrolls.
+local sample
+local function createFontSample(parent, app)
+    if not sample then
+        sample = parent:CreateFontString(nil, 'OVERLAY', 'GameTooltipText')
+        sample:SetPoint('CENTER')
+        sample:SetText('Aa')
+    end
+    return {
+        Refresh = function()
+            local ok, err = app.fonts:Apply(sample, 'body')
+            if not ok then error(err.message) end
+            sample:Show()
+        end,
+        Layout = function() return 28 end,
+        Hide = function() sample:Hide() end,
+    }
+end
 -- Optional consumer shortcuts follow the framework-owned profile commands.
 local profiles = SND.Pages.Profiles()
 profiles.sections = {{controls={{type='description',text='Each profile stores its own appearance.'}}}}
 local panel = app:Options({
     title = ADDON,
+    header = {width=44, create=createFontSample},
     layout = {fieldWidth=220, minLabelWidth=160},
     pages = {{ id = 'appearance', label = 'Appearance', sections = {{
         title = 'Appearance', controls = {
@@ -40,7 +59,7 @@ local panel = app:Options({
             { type = 'font', key = 'font', label = 'Font' },
             { type = 'color', key = 'tint', label = 'Tint', width = 36, preview = paint },
             { type = 'select', key = 'theme', label = 'Theme', choices = app.ui:Themes() },
-            { type = 'slider', key = 'fontSize', label = 'Font size' },
+            { type = 'slider', key = 'fontSize', label = 'Font size', editable = true },
         },
     }} }, profiles},
 })

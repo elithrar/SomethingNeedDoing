@@ -20,6 +20,10 @@ SND._install[#SND._install + 1] = function(app)
         I.array(spec.pages, 'pages', true)
         I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
         spec.layout=I.formLayout(spec.layout)
+        if spec.header ~= nil then
+            I.check(I.plain(spec.header) and SND.Values.Number(spec.header.width) and spec.header.width>0
+                and type(spec.header.create)=='function', 'header requires a positive width and a component factory')
+        end
         local pageIDs={}
         local function choices(entries)
             I.array(entries,'choices')
@@ -52,6 +56,7 @@ SND._install[#SND._install + 1] = function(app)
                     I.check(c.width==nil or (SND.Values.Number(c.width) and c.width>0),'control width must be positive')
                     I.check(c.align==nil or (c.type=='button' and (c.align=='start' or c.align=='field' or c.align=='stretch')),'invalid control alignment')
                     I.check(c.step==nil or (SND.Values.Number(c.step) and c.step>0), 'control step must be positive')
+                    I.check(c.editable==nil or (c.type=='slider' and type(c.editable)=='boolean'), 'editable must be a boolean on a slider')
                     I.check(c.format==nil or c.format=='percent' or type(c.format)=='function', 'invalid control formatter')
                     if c.choices~=nil and type(c.choices)~='function' then choices(c.choices)end
                 end
@@ -89,6 +94,29 @@ SND._install[#SND._install + 1] = function(app)
         local function button(id,parent,label,action)
             local b=ownedControl(id,parent,'button');b:SetSize(math.min(230,math.max(1,parent:GetWidth())),26)
             b.text=text(id..':text',b,label);panel._buttons[id]=b;b:SetScript('OnClick',action);fitButton(b);return b
+        end
+        local function refreshClose()
+            local shell = panel.frame
+            local close
+            if shell._sndGameDialog then
+                -- The template owns the corner anchor, hit area, textures and
+                -- OnClick. Its callback lets SND close its own transient UI.
+                close = frame('gameClose','Button',shell,'UIPanelCloseButtonDefaultAnchors')
+                if not shell.onCloseCallback then
+                    shell.onCloseCallback = function() panel:Close(); return false end
+                end
+            else
+                close = panel._pool.textClose
+                if not close then
+                    close = button('textClose',shell,'×',function() panel:Close() end)
+                    close:SetWidth(26);close:SetPoint('TOPRIGHT',-10,-10)
+                end
+                fitButton(close)
+            end
+            local previous = panel._pool.close
+            if previous and previous~=close then previous:Hide() end
+            panel._pool.close = close
+            close:Show()
         end
         local function input(id,parent,width)
             local edit=ownedControl(id,parent,'input')
@@ -249,16 +277,63 @@ SND._install[#SND._install + 1] = function(app)
             for _,entry in ipairs(offered)do if I.equal(entry.value,selected)then label=entry.label;break end end
             d:SetDefaultText(label);caption(d,label);return d
         end
+        local function editableSlider(id,parent,c,field,slider,width)
+            local group=frame(id..':field','Frame',parent)
+            local entryWidth=math.min(width,math.max(48,math.min(72,math.floor(width/4))))
+            local entry=input(id..':value',parent,entryWidth)
+            entry:SetJustifyH('RIGHT')
+            if not entry._sndRestoreOnBlur then
+                local ok,hook=app._system:HookScript(entry,'OnEditFocusLost',function(edit)
+                    edit:SetText(tostring(app:Get(c.key)))
+                end)
+                requireResource(ok,hook)
+                entry._sndRestoreOnBlur=hook
+                entry:SetScript('OnEscapePressed',function(edit)edit:ClearFocus()end)
+            end
+            if not entry:HasFocus() then entry:SetText(tostring(app:Get(c.key))) end
+            local view=panel._view
+            entry:SetScript('OnEnterPressed',function(edit)
+                if not view or not view.active or view~=panel._view or not edit:IsEnabled() or not edit:HasFocus() then return end
+                local value=tonumber(edit:GetText())
+                edit:ClearFocus() -- focus loss restores the last committed text, including on rejection
+                if not SND.Values.Number(value) or value<field.min or value>field.max then return end
+                local steps=(value-field.min)/(c.step or 1)
+                if value~=field.max and math.abs(steps-math.floor(steps+.5))>1e-7 then return end
+                if field.type=='integer' and value~=math.floor(value) then return end
+                report(app:Set(c.key,value))
+            end)
+            -- On a narrow field keep the rail usable and let the entry occupy a
+            -- second line. The standard row then measures both controls and any hint.
+            local inline=width>=entryWidth+56
+            group:SetHeight(inline and 26 or 56);group:Show()
+            slider:ClearAllPoints();slider:SetPoint('TOPLEFT',group,'TOPLEFT')
+            slider:SetSize(inline and width-entryWidth-8 or width,26)
+            entry:ClearAllPoints();entry:SetPoint('TOPRIGHT',group,'TOPRIGHT',0,inline and 0 or -30)
+            return group,entry
+        end
+        local function customComponent(id,parent,specification,width)
+            local container=frame(id,'Frame',parent)
+            container:SetWidth(width);container:Show()
+            local component=panel._components[id]
+            if not component then
+                component=specification.create(container,app,panel._view)
+                I.check(component and type(component.Refresh)=='function' and type(component.Layout)=='function'
+                    and type(component.Hide)=='function','invalid custom component')
+                panel._components[id]=component
+            end
+            component:Refresh()
+            local height=component:Layout(width)
+            I.check(SND.Values.Number(height) and height>=0,'custom layout must return a finite nonnegative height')
+            container:SetHeight(height)
+            return container,height,component
+        end
         local function control(id,parent,c,width,layout)
-            local kind=c.type;local widget,label
+            local kind=c.type;local widget,label,group,entry
             local field=c.key and app._settingsFields and app._settingsFields[c.key]
             if c.key then I.check(field,'control binds unknown field: '..c.key) end
             local function write(value) if not panel._refreshing then report(app:Set(c.key,value)) end end
             if kind=='custom' then
-                local container=frame(id,'Frame',parent);container:SetWidth(width);container:Show()
-                local component=panel._components[id]
-                if not component then component=c.create(container,app,panel._view);I.check(component and component.Refresh and component.Layout and component.Hide,'invalid custom component');panel._components[id]=component end
-                component:Refresh();local height=component:Layout(width);I.check(SND.Values.Number(height) and height>=0,'custom layout must return a finite nonnegative height');container:SetHeight(height);return container,height,component
+                return customComponent(id,parent,c,width)
             elseif kind=='description' then
                 label=text(id,parent,c.text or c.label,'muted')
             elseif kind=='button' then
@@ -280,16 +355,19 @@ SND._install[#SND._install + 1] = function(app)
                 widget=ownedControl(id,parent,'slider');widget:SetOrientation('HORIZONTAL')
                 widget:SetMinMaxValues(field.min,field.max);widget:SetValueStep(c.step or 1);widget:SetObeyStepOnDrag(true);widget:SetValue(app:Get(c.key))
                 widget:SetScript('OnValueChanged',function(_,value)write(value)end)
-                local value=app:Get(c.key);local formatted=c.format=='percent' and string.format('%g%%',value*100) or type(c.format)=='function' and c.format(value) or tostring(value)
                 label=text(id..':label',parent,c.label)
-                local readout=text(id..':value',parent,formatted..(c.units and ' '..c.units or ''))
                 local fieldWidth=math.min(width, layout.fieldWidth, c.width or layout.fieldWidth)
-                -- Reserve a stable column so crossing a digit boundary during a drag
-                -- does not move the thumb underneath the pointer.
-                readout:SetWidth(math.max(1, math.floor(fieldWidth / 4)))
-                readout:SetHeight(0);readout:SetWordWrap(true);readout:SetJustifyH('RIGHT')
-                readout:ClearAllPoints();readout:SetPoint('LEFT',widget,'RIGHT',8,0)
-                widget:SetHeight(math.max(26,readout:GetStringHeight()))
+                if c.editable then
+                    group,entry=editableSlider(id,parent,c,field,widget,fieldWidth)
+                else
+                    local value=app:Get(c.key);local formatted=c.format=='percent' and string.format('%g%%',value*100) or type(c.format)=='function' and c.format(value) or tostring(value)
+                    local readout=text(id..':value',parent,formatted..(c.units and ' '..c.units or ''))
+                    -- A stable value column keeps digit changes from moving the rail during a drag.
+                    readout:SetWidth(math.max(1, math.floor(fieldWidth / 4)))
+                    readout:SetHeight(0);readout:SetWordWrap(true);readout:SetJustifyH('RIGHT')
+                    readout:ClearAllPoints();readout:SetPoint('LEFT',widget,'RIGHT',8,0)
+                    widget:SetHeight(math.max(26,readout:GetStringHeight()))
+                end
             elseif kind=='color' then
                 widget=button(id,parent,'',function()color(c)end)
                 label=text(id..':label',parent,c.label)
@@ -307,9 +385,13 @@ SND._install[#SND._install + 1] = function(app)
                 widget:SetEnabled(allowed);widget:SetAlpha(allowed and 1 or .45);widget:Show()
                 if widget.Text then requireResource(app.ui:Color(widget.Text,'text')) end
                 if label then requireResource(app.ui:Color(label,allowed and 'text' or 'muted')) end
-                if kind=='slider' then requireResource(app.ui:Color(panel._texts[id..':value'],allowed and 'accent' or 'muted')) end
+                if entry then
+                    entry:SetEnabled(allowed);entry:Show()
+                elseif kind=='slider' then
+                    requireResource(app.ui:Color(panel._texts[id..':value'],allowed and 'accent' or 'muted'))
+                end
             end
-            return widget,nil,label
+            return group or widget,nil,label
         end
         function panel:_build()
             local name=app.name..'_SND_Options'
@@ -322,7 +404,6 @@ SND._install[#SND._install + 1] = function(app)
             f:SetScript('OnDragStart',function()f:StartMoving()end);f:SetScript('OnDragStop',function()f:StopMovingOrSizing()end)
             f:SetScript('OnHide',function()if not self._closing then self:_deactivate()end end);requireResource(app.ui:Style(f,'dialog'))
             local title=text('title',f,spec.title or app.name,'heading',{size=18});title:SetPoint('TOPLEFT',16,-16)
-            local close=button('close',f,'×',function()self:Close()end);close:SetSize(26,26);close:SetPoint('TOPRIGHT',-10,-10)
             local scroll=frame('scroll','ScrollFrame',f);self.scroll=scroll;scroll:SetPoint('TOPLEFT',16,-50);scroll:SetPoint('BOTTOMRIGHT',-16,16)
             local child=frame('body','Frame',scroll);self.body=child;scroll:SetScrollChild(child)
             local bar=frame('scrollbar','Slider',f,'BackdropTemplate');self.bar=bar;bar:EnableMouse(true);bar:SetPoint('TOPRIGHT',-16,-50);bar:SetPoint('BOTTOMRIGHT',-16,16);bar:SetWidth(8);bar:SetValueStep(1);bar:SetOrientation('VERTICAL')
@@ -450,7 +531,7 @@ SND._install[#SND._install + 1] = function(app)
                                 layout=section.layout,controlWidth=c.width,align=c.align})
                             requireResource(ok,result);height=result
                             if c.type=='select' or c.type=='font' then caption(widget,widget._fullCaption)end
-                            if c.type=='slider' then
+                            if c.type=='slider' and not c.editable then
                                 local value=self._texts[id..':value']
                                 widget:SetWidth(math.max(1,widget:GetWidth()-value:GetWidth()-8))
                             end
@@ -467,6 +548,35 @@ SND._install[#SND._install + 1] = function(app)
             self._used,self._usedText=nil,nil
             return y
         end
+        local function layoutHeader(frameWidth)
+            local title=panel._texts.title
+            local close=panel._pool.close
+            local titleWidth=frameWidth-76
+            title:SetWidth(titleWidth);title:SetHeight(0);title:SetWordWrap(true)
+            local headerBottom=math.max(48,title:GetStringHeight()+32,close:GetHeight()+24)
+            if not spec.header then return headerBottom end
+
+            local width=math.min(spec.header.width,frameWidth-32)
+            local host,height=customComponent('header',panel.frame,spec.header,width)
+            local rightInset=18+close:GetWidth()
+            local beside=frameWidth-16-12-width-rightInset
+            local captionWidth=title.GetUnboundedStringWidth and title:GetUnboundedStringWidth() or title:GetStringWidth()
+            host:ClearAllPoints()
+            if beside>=math.min(120,captionWidth) then
+                title:SetWidth(beside)
+                local titleHeight=title:GetStringHeight()
+                local rowHeight=math.max(titleHeight,height)
+                title:ClearAllPoints()
+                title:SetPoint('TOPLEFT',16,-12-(rowHeight-titleHeight)/2)
+                host:SetPoint('TOPRIGHT',-rightInset,-12-(rowHeight-height)/2)
+                return math.max(close:GetHeight()+24,24+rowHeight)
+            end
+            -- Put the preview below the title when the close control and
+            -- preview would otherwise squeeze the caption into a few letters.
+            title:ClearAllPoints();title:SetPoint('TOPLEFT',16,-16)
+            host:SetPoint('TOPRIGHT',-16,-headerBottom)
+            return headerBottom+height+12
+        end
         function panel:Refresh()
             if not self:IsShown() then return true end
             if self._refreshing then self._refreshAgain=true;return true end
@@ -480,9 +590,8 @@ SND._install[#SND._install + 1] = function(app)
                 local scale=math.min(1,math.max(.1,(UIParent:GetWidth()-16)/frameWidth))
                 self.frame:SetScale(scale);self.frame:SetWidth(frameWidth)
                 self.frame:SetHeight(math.max(140,math.min(spec.height or 500,(UIParent:GetHeight()-16)/scale)))
-                fitButton(self._pool.close)
-                local title=self._texts.title;title:SetWidth(frameWidth-76);title:SetHeight(0);title:SetWordWrap(true)
-                local tabY=math.max(48,title:GetStringHeight()+32,self._pool.close:GetHeight()+24)
+                refreshClose()
+                local tabY=layoutHeader(frameWidth)
                 local count,tabWidth=app.layout:Columns(frameWidth-32,{columns=math.max(1,math.min(4,#tabs)),minColumnWidth=110,columnGap=4})
                 local rowHeight=0
                 for index,p in ipairs(tabs)do

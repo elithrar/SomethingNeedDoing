@@ -186,7 +186,10 @@ Set `layout` on an options panel or section; compact controls keep their place i
 ```lua
 local panel = app:Options({layout={fieldWidth=220, minLabelWidth=160}, pages={
     {id="appearance", label="Appearance", sections={
-        {controls={{type="color", key="tint", label="Tint", width=36}}},
+        {controls={
+            {type="color", key="tint", label="Tint", width=36},
+            {type="slider", key="fontSize", label="Font size", editable=true},
+        }},
         {layout={columns=2, minColumnWidth=200}, controls={
             {type="button", label="Preview", align="stretch", action=function() preview:Show() end},
             {type="button", label="Hide preview", align="stretch", action=function() preview:Hide() end},
@@ -196,3 +199,5 @@ local panel = app:Options({layout={fieldWidth=220, minLabelWidth=160}, pages={
 ```
 
 Declare bound settings first. Custom panels can use `ui:Control(parent, id, kind)` for reusable native controls, `layout:Row(parent, spec)` for measured placement, and `layout:Columns(width, spec)` for responsive columns. Check construction/row Results; column calculation returns count and width directly. Values, menus and callbacks remain with the consumer. See [the form API](API.md#form-layout-and-custom-controls) and [executable example](examples/Consumer.lua).
+
+The font-size slider accepts an exact value with Enter. To keep a live sample visible while scrolling, pass `header={width=44, create=createFontSample}` to `app:Options`. The factory receives the parent, app and view scope. Its component implements `Refresh()`, `Layout(width)` and `Hide()`. The [executable example](examples/Consumer.lua) shows the font sample on both pages.

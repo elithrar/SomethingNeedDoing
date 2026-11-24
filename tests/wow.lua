@@ -15,6 +15,14 @@ function CreateFrame(kind,name,parent,template)
     -- options owner to opt in, instead of dispatching OnClick unconditionally.
     if template and template:find('BackdropTemplate',1,true) then f.mouseEnabled=false end
     if name then _G[name]=f end
+    if template=='UIPanelCloseButtonDefaultAnchors' then
+        -- Forever SharedUIPanelTemplates.xml and the Camelot anchor override.
+        f:SetSize(24,24);f:SetPoint('TOPRIGHT',-2,1);f:EnableMouse(true)
+        f.scripts.OnClick=function(button)
+            local shell=button:GetParent()
+            if not shell.onCloseCallback or shell.onCloseCallback(button) then shell:Hide() end
+        end
+    end
     if template=='UICheckButtonTemplate' or kind=='DropdownButton' then f.Text=object('FontString',f) end
     if kind=='DropdownButton' then
         f.Background=object('Texture',f);f.Arrow=object('Texture',f)
@@ -138,8 +146,18 @@ function methods:IsForbidden()return self.forbidden==true end
 function methods:SetClampedToScreen(enabled)self.clampedToScreen=enabled end
 function methods:StartMoving()self.moving=true end
 function methods:StopMovingOrSizing()self.moving=false end
-function methods:SetFocus()self.focus=true end
-function methods:ClearFocus()self.focus=false end
+function methods:HasFocus()return self.focus==true end
+function methods:SetFocus()
+    if self:HasFocus() or not self:IsEnabled() then return end
+    if W.focused then W.focused:ClearFocus()end
+    W.focused=self;self.focus=true
+    if self.scripts.OnEditFocusGained then self.scripts.OnEditFocusGained(self)end
+end
+function methods:ClearFocus()
+    if not self:HasFocus() then return end
+    W.focused=nil;self.focus=false
+    if self.scripts.OnEditFocusLost then self.scripts.OnEditFocusLost(self)end
+end
 for _,name in ipairs({'SetTextInsets','SetFrameStrata','SetMovable','RegisterForDrag','EnableMouseWheel','SetValueStep','SetObeyStepOnDrag','SetAutoFocus','SetWordWrap','SetJustifyV'})do methods[name]=function()end end
 UIParent=object('Frame');UIParent:SetSize(1280,720)
 GameFontNormal=object('Font');GameTooltipText=object('Font')

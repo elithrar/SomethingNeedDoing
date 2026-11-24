@@ -459,6 +459,7 @@ test('generated options and settled font layout','default panels must bind valid
     assert(not pcall(function()a.profiles:Duplicate('')end));assert(not pcall(function()a.profiles:CopyFrom(nil)end))
     panel._pool['profile-name']:SetText('Other');panel._pool['profile-add'].scripts.OnClick();assert(a.profiles:Active()=='Other' and not panel._profileError)
     -- Captions keep the selected font size and grow their row when wrapping.
+    assert(a:Set('theme','modern'))
     panel._pool['profile-reset'].scripts.OnClick()
     local confirm=panel._pool['profile-confirm'];local count=#W.frames
     local close=panel._pool.close;local closeMeasure=close.text.GetStringHeight
@@ -528,6 +529,73 @@ test('compact options presentation','aligned fields, disabled feedback and selec
     local count=#W.frames;assert(panel:SelectPage('settings'));panel:Close();assert(panel:Open());assert(#W.frames==count)
 end)
 
+test('editable slider','typing and dragging share one value while unfinished or invalid input cannot escape its settings view',function()
+    local function fields(name)
+        return {savedVariables={name..'DB'},fields={
+            size={type='integer',default=12,min=8,max=16},
+            enabled={type='boolean',default=true},
+        }}
+    end
+    local function panelFor(a)
+        return a:Options({pages={{id='fonts',sections={{controls={
+            {type='slider',id='size',key='size',label='Size',step=2,editable=true,enabled=function(app)return app:Get('enabled')end},
+            {type='slider',id='narrow',key='size',label='Narrow field',width=80,step=2,editable=true},
+        }}}},{id='other'}}})
+    end
+    local a=app(fields)
+    local panel=panelFor(a)
+    boot(a);assert(panel:Open())
+    local slider,entry=panel._pool['fonts:1:size'],panel._pool['fonts:1:size:value']
+    assert(entry.kind=='EditBox' and entry:GetText()=='12' and slider:GetValue()==12)
+    local narrow,group=panel._pool['fonts:1:narrow:value'],panel._pool['fonts:1:narrow:field']
+    assert(narrow.anchors.TOPRIGHT[5]<0 and group:GetHeight()>=26+narrow:GetHeight())
+    local function enter(text)
+        entry:SetFocus();entry:SetText(text);entry.scripts.OnEnterPressed(entry)
+        assert(not entry:HasFocus())
+    end
+    enter('16');assert(a:Get('size')==16 and slider:GetValue()==16 and entry:GetText()=='16')
+    slider:SetValue(10);assert(a:Get('size')==10 and entry:GetText()=='10' and narrow:GetText()=='10')
+    for _,invalid in ipairs({'','large','99','11','10.5','1e1000'}) do
+        enter(invalid);assert(a:Get('size')==10 and entry:GetText()=='10' and slider:GetValue()==10)
+    end
+    entry:SetFocus();entry:SetText('14');assert(panel:Refresh() and entry:GetText()=='14')
+    entry.scripts.OnEscapePressed(entry);assert(not entry:HasFocus() and entry:GetText()=='10')
+    entry:SetFocus();entry:SetText('16');entry:ClearFocus();assert(entry:GetText()=='10')
+    -- A committed write ends the edit, even when the source was the matching
+    -- slider. A delayed Enter event must never resurrect those keystrokes.
+    entry:SetFocus();entry:SetText('16')
+    local oldEnter=entry.scripts.OnEnterPressed
+    slider:SetValue(14);oldEnter(entry)
+    assert(not entry:HasFocus() and entry:GetText()=='14' and a:Get('size')==14)
+    assert(a:Set('size',12) and a.profiles:Duplicate('Second'))
+    -- Equal values leave the same readout on screen but begin a new profile
+    -- lifetime. Exercise switch, copy, and reset through their real commands.
+    for _,command in ipairs({
+        function()return a.profiles:Switch('Default')end,
+        function()return a.profiles:CopyFrom('Second')end,
+        function()return a.profiles:Reset()end,
+    }) do
+        entry:SetFocus();entry:SetText('16')
+        oldEnter=entry.scripts.OnEnterPressed
+        assert(command());oldEnter(entry)
+        assert(not entry:HasFocus() and entry:GetText()=='12' and a:Get('size')==12)
+    end
+    assert(a:Set('size',10))
+    entry:SetFocus();entry:SetText('14');assert(panel:SelectPage('other'))
+    assert(not entry:IsShown() and not entry:HasFocus() and a:Get('size')==10)
+    assert(panel:SelectPage('fonts'));local count=#W.frames
+    entry:SetFocus();entry:SetText('8');assert(panel:Close() and panel:Open())
+    assert(not entry:HasFocus() and entry:GetText()=='10' and #W.frames==count)
+    entry:SetFocus();entry:SetText('16');assert(a:Set('enabled',false))
+    assert(not entry:IsEnabled() and not slider:IsEnabled() and not entry:HasFocus() and entry:GetText()=='10')
+    panel:Close()
+    local b=app(fields);local locked=panelFor(b)
+    _G[b.name..'DB']={version=999}
+    boot(b);assert(locked:Open())
+    assert(not locked._pool['fonts:1:size:value']:IsEnabled() and not locked._pool['fonts:1:size']:IsEnabled())
+    assert(_G[b.name..'DB'].version==999);locked:Close()
+end)
+
 test('single-page settings shell','a single page recovers its navigation space and preserves the slider value when resized or reopened',function()
     local a=app(basic)
     local page={id='display',label='Display',sections={{title='Display options',controls={
@@ -562,6 +630,30 @@ test('single-page settings shell','a single page recovers its navigation space a
     assert(-multi.scroll.anchors.TOPLEFT[3]>=-top[3]+multi._pool['tab:display']:GetHeight())
     assert(W.click(multi._pool['tab:other']) and multi._page=='other')
     multi:Close();panel:Close()
+end)
+
+test('Forever native close button','click and Escape release the page; only the active theme owns the close hit area',function()
+    local a=app(function(name)return {savedVariables={name..'DB'},fields={
+        theme={type='enum',default='forever',values={'forever','modern'}},
+    }}end)
+    local panel=a:Options({pages={{id='main'}}})
+    boot(a);assert(panel:Open())
+    local native=panel._pool.close
+    assert(native.template=='UIPanelCloseButtonDefaultAnchors' and not panel._pool.textClose and not native.hitInsets)
+    assert(native:GetWidth()==24 and native:GetHeight()==24 and native.points[1]=='TOPRIGHT')
+    assert(native.points[2]==-2 and native.points[3]==1)
+    assert(W.click(native) and not panel:IsShown() and not panel._view)
+    assert(panel:Open() and panel._pool.close==native)
+    assert(a:Set('theme','modern'))
+    local text=panel._pool.close
+    assert(text~=native and text.text:GetText()=='×' and not W.click(native) and panel:IsShown())
+    local count=#W.frames
+    assert(a:Set('theme','forever') and panel._pool.close==native and not W.click(text))
+    local name=a.name..'_SND_Options'
+    for _,entry in ipairs(UISpecialFrames)do if entry==name then _G[entry]:Hide() end end
+    assert(not panel:IsShown() and not panel._view)
+    assert(panel:Open() and panel._pool.close==native and #W.frames==count)
+    assert(W.click(native))
 end)
 
 test('Forever native control artwork','the dialog rim, slider track and thumb appear together and release their art when switching themes',function()
@@ -895,6 +987,38 @@ test('layout failure and unresolved geometry','unavailable geometry preserves an
     assert(h:Refresh());assert(f.left==1180)
     h:Cancel();assert(not a._frame.events.DISPLAY_SIZE_CHANGED)
     a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+end)
+
+test('options header component','a sample stays clear of the close button and scroll area, updates with settings and reuses its parent when reopened',function()
+    local a=app(basic)
+    local host,owner,last,hides
+    local pages={{id='options',sections={}}}
+    assert(not pcall(a.Options,a,{pages=pages,header={width=0,create=function()end}}))
+    local panel=a:Options({pages=pages,title='Sample settings',header={width=46,create=function(parent,app,scope)
+        assert(app==a and (not host or host==parent))
+        host,owner=parent,scope
+        return {
+            Refresh=function()last=a:Get('enabled')end,
+            Layout=function(_,width)assert(width==46);return width end,
+            Hide=function()hides=(hides or 0)+1 end,
+        }
+    end}})
+    boot(a);assert(panel:Open() and last and host:GetParent()==panel.frame)
+    assert(host.points[1]=='TOPRIGHT' and -host.points[2]>panel._pool.close:GetWidth())
+    local function aboveBody()
+        assert(-host.points[3]+host:GetHeight() <= -panel.scroll.anchors.TOPLEFT[3])
+    end
+    aboveBody()
+    assert(a:Set('enabled',false) and last==false)
+    local originalWidth=UIParent:GetWidth()
+    UIParent:SetWidth(176);W.event('DISPLAY_SIZE_CHANGED')
+    assert(-host.points[3]>=16+panel._texts.title:GetStringHeight(),'narrow title and preview have separate rows')
+    aboveBody()
+    UIParent:SetWidth(originalWidth);W.event('DISPLAY_SIZE_CHANGED')
+    local count=#W.frames
+    panel:Close();assert(hides==1 and not owner.active)
+    assert(a:Set('enabled',true) and last==false)
+    assert(panel:Open() and last and owner.active and #W.frames==count);panel:Close()
 end)
 
 print('PASS '..total..' focused tests')

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.7
+
+### Public API changes
+
+- A slider previously displayed its formatted value beside the track. Add `editable = true` to let users type a value in stored units and press Enter to save it.
+- Custom components previously appeared in page sections. Pass `header = {width = 46, create = createPreview}` to `app:Options` to keep one beside the title while the body scrolls. The factory uses the same `Refresh`, `Layout` and `Hide` methods as a page component.
+
+Both additions are optional. Existing declarations need no migration.
+
+### Internal improvements
+
+- Use Blizzard’s standard red close button on Forever-themed options windows.
+
 ## 0.5.6
 
 ### Public API changes
