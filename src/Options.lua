@@ -26,9 +26,12 @@ SND._install[#SND._install + 1] = function(app)
         I.array(spec.pages, 'pages', true)
         I.check((spec.width==nil or (SND.Values.Number(spec.width) and spec.width>=160)) and (spec.height==nil or (SND.Values.Number(spec.height) and spec.height>=140)), 'invalid panel dimensions')
         spec.layout=I.formLayout(spec.layout)
-        if spec.header ~= nil then
-            I.check(I.plain(spec.header) and SND.Values.Number(spec.header.width) and spec.header.width>0
-                and type(spec.header.create)=='function', 'header requires a positive width and a component factory')
+        for _,slot in ipairs({'header','subheader'})do
+            local component=spec[slot]
+            if component~=nil then
+                I.check(I.plain(component) and SND.Values.Number(component.width) and component.width>0
+                    and type(component.create)=='function',slot..' requires a positive width and a component factory')
+            end
         end
         local pageIDs={}
         local function choices(entries)
@@ -43,6 +46,7 @@ SND._install[#SND._install + 1] = function(app)
             I.array(page.sections==nil and {} or page.sections, 'sections')
             for si,section in ipairs(page.sections or {})do
                 I.check(I.plain(section),'section must be a plain table')
+                I.check(section.flow==nil or section.flow=='row' or section.flow=='column','section flow must be row or column')
                 section._titleKey=pagePrefix..'section:'..si
                 section.layout=I.formLayout(section.layout,spec.layout)
                 I.array(section.controls==nil and {} or section.controls,'controls')
@@ -257,8 +261,6 @@ SND._install[#SND._install + 1] = function(app)
         end
         local function dropdown(id,parent,entries,get,set)
             local d=ownedControl(id,parent,'dropdown');panel._menus[id]=d;d:SetSize(230,26)
-            -- Keep native menu/selection behavior, but own the closed control's
-            -- chrome. Forever's template artwork extends beyond its bounds.
             if not panel._menuFont then panel._menuFont=CreateFont(app.name..'_SND_Menu')end
             requireResource(app.fonts:Apply(panel._menuFont,'menu'))
             d:SetupMenu(function(_,root)
@@ -266,9 +268,13 @@ SND._install[#SND._install + 1] = function(app)
                 -- them. Reject their responders before they touch any owner.
                 local owner=panel._view
                 local revision=app._settingsStore and app._settingsStore._revision
-                local function choose(value)
+                local function choose(value,input)
                     if not owner or not owner.active or panel._view~=owner or not panel:IsShown() then return end
                     if app._settingsStore and app._settingsStore._revision~=revision then return end
+                    if d:GetMenuDescription()~=root then return end
+                    -- A wheel or stepper picks a radio on the current, closed
+                    -- dropdown. A mouse-button selection belongs to its popup.
+                    if not d:IsMenuOpen() and not (input and input.context==MenuInputContext.MouseWheel) then return end
                     set(value)
                 end
                 root:SetScrollMode(240)
@@ -285,6 +291,7 @@ SND._install[#SND._install + 1] = function(app)
                     local row=root:CreateRadio(entry.label,function(value)return I.equal(get(),value)end,choose,entry.value)
                     row:AddInitializer(function(native) if native.fontString then native.fontString:SetFontObject(panel._menuFont) end end)
                 end
+                requireResource(app.ui:StyleMenu(root))
             end)
             if d.Text and not d._captionHooks then
                 local owner=app:Scope()
@@ -578,9 +585,27 @@ SND._install[#SND._install + 1] = function(app)
                 end
                 local columns,columnWidth=app.layout:Columns(width,section.layout)
                 local column,rowHeight=0,0
-                for _,c in ipairs(section.controls or {}) do
+                local controls=section.controls or {}
+                local down=section.flow=='column' and columns>1
+                local shortColumn,extra
+                if down then
+                    local visible={}
+                    for _,c in ipairs(controls)do
+                        if not c.visible or c.visible(app) then visible[#visible+1]=c
+                        elseif self._components[c._poolKey] then self._components[c._poolKey]:Cancel() end
+                    end
+                    controls=visible
+                    shortColumn,extra=math.floor(#controls/columns),#controls%columns
+                end
+                for i,c in ipairs(controls) do
+                    if down then
+                        -- Layout still measures each visual row together. Read its cell
+                        -- from the authored column, giving the first columns any extra row.
+                        local first=1+column*shortColumn+math.min(column,extra)
+                        c=controls[first+math.floor((i-1)/columns)]
+                    end
                     local id=c._poolKey
-                    if not c.visible or c.visible(app) then
+                    if down or not c.visible or c.visible(app) then
                         local widget,height,label=control(id,self.body,c,columnWidth,section.layout)
                         local x=column*(columnWidth+section.layout.columnGap)
                         if c.type=='custom' then
@@ -615,7 +640,15 @@ SND._install[#SND._install + 1] = function(app)
             local titleWidth=frameWidth-76
             title:SetWidth(titleWidth);title:SetHeight(0);title:SetWordWrap(true)
             local headerBottom=math.max(48,title:GetStringHeight()+32,close:GetHeight()+24)
-            if not spec.header then return headerBottom end
+            local function leftHeight(available)
+                local titleHeight=title:GetStringHeight()
+                if not spec.subheader then return titleHeight end
+                local width=math.min(available,spec.subheader.width)
+                local host,height=customComponent('subheader',panel.frame,spec.subheader,width)
+                host:ClearAllPoints();host:SetPoint('TOPLEFT',16,-(16+titleHeight+4))
+                return titleHeight+4+height
+            end
+            if not spec.header then return math.max(headerBottom,24+leftHeight(frameWidth-32)) end
 
             local width=math.min(spec.header.width,frameWidth-32)
             local host,height=customComponent('header',panel.frame,spec.header,width)
@@ -623,14 +656,16 @@ SND._install[#SND._install + 1] = function(app)
             local beside=frameWidth-16-12-width-rightInset
             local captionWidth=title.GetUnboundedStringWidth and title:GetUnboundedStringWidth() or title:GetStringWidth()
             host:ClearAllPoints()
-            if beside>=math.min(120,captionWidth) then
+            local preferred=math.max(captionWidth,spec.subheader and spec.subheader.width or 0)
+            if beside>=math.min(120,preferred) then
                 title:SetWidth(beside)
-                local rowHeight=math.max(title:GetStringHeight(),height)
+                local rowHeight=math.max(leftHeight(beside),height)
                 host:SetPoint('TOPRIGHT',-rightInset,-16)
                 return math.max(close:GetHeight()+24,24+rowHeight)
             end
             -- Put the preview below the title when the close control and
             -- preview would otherwise squeeze the caption into a few letters.
+            headerBottom=math.max(headerBottom,24+leftHeight(frameWidth-32))
             host:SetPoint('TOPRIGHT',-16,-headerBottom)
             return headerBottom+height+12
         end

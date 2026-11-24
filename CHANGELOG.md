@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+### Public API changes
+
+- Previously, remembering an active profile per character required a custom adapter. Set `characterProfiles = true` on a fresh account-wide settings global, then call `profiles:BindCharacter(identity)` once the name and realm are available. New characters use Shared. An optional `initialProfile(fields)` seeds Shared from existing settings. `profiles:Characters(name?)` lists its known users. Existing adapters and ordinary profile databases need no migration.
+- Generated sections fill across rows by default. Set `section.flow = "column"` to keep related controls in column order at wide and narrow widths. Existing forms retain their layout.
+- Previously, only the right-hand header could stay visible above the form. Pass `subheader={width=180, create=createProfilePicker}` to place a scoped component directly beneath the title. Existing header declarations need no changes.
+- Add-on menus can opt into Forever menu styling with `app.ui:StyleMenu(rootDescription)` after populating the menu. Forever options selectors use the same opaque surface, native hover and single gold selection mark. Existing menu generators need no migration.
+
+### Internal improvements
+
+- Copy a built-in profile database once when staging its active values. A valid account near the saved-data size limit can now switch characters and reload.
+- Ignore menu clicks delivered after dismissal or after a newer menu replaces the choices. The current menu still handles native mouse-wheel selections.
+- Exercise profile migration, character switching, menu reuse and responsive form layout in the offline suites.
+
 ## 0.5.10
 
 ### Public API changes

@@ -82,6 +82,13 @@ add-on's responsibility. Existing databases need a
 [migration adapter](examples/SettingsAdapter.lua). The TOC determines whether
 saved profiles are account-wide or per-character.
 
+To let alts share a preset while remembering individual selections, declare a
+fresh account-wide global and set `characterProfiles = true`. Bind a stable
+character name and realm once the player is known. New characters use Shared.
+`app.profiles:Duplicate(name)` copies the active settings and selects the copy
+for the bound character. `app.profiles:Characters()` lists who uses it.
+The [character profiles example](examples/CharacterProfiles.lua) shows the login path.
+
 Successful profile commands invalidate old edits even if their values are
 unchanged. Custom movers should use `OnSettingsChanged` and the operation
 `reason` to cancel gestures on reset/copy/switch; value-only watchers remain
@@ -105,6 +112,8 @@ if not colored then app.log:Warn(colorError.message) end
 
 A `theme` setting selects the palette. The [executable example](examples/Consumer.lua)
 shows custom themes, shared checkbox styling and `SelectAppearance` observers for remeasuring custom views. Custom options panels can use the `dropdown`, `checkbox`, `slider` and `scrollbar` style roles; see [API.md](API.md) for their native frame/template requirements.
+
+For your own dropdown or context menu, call `app.ui:StyleMenu(rootDescription)` after adding its rows in the native generator. The Forever preset gives the popup an opaque background and marks the active choice with a gold check. Right-click the preview in the executable example to try it.
 
 ## Design Notes
 
@@ -202,6 +211,6 @@ local panel = app:Options({layout={fieldWidth=220, minLabelWidth=160}, pages={
 }})
 ```
 
-Declare bound settings first. Custom panels can use `ui:Control(parent, id, kind)` for reusable native controls, `layout:Row(parent, spec)` for measured placement, and `layout:Columns(width, spec)` for responsive columns. Check construction/row Results; column calculation returns count and width directly. Values, menus and callbacks remain with the consumer. See [the form API](API.md#form-layout-and-custom-controls) and [executable example](examples/Consumer.lua).
+Set `flow="column"` on a section to keep each column’s controls together when the panel narrows. Declare bound settings first. Custom panels can use `ui:Control(parent, id, kind)` for reusable native controls, `layout:Row(parent, spec)` for measured placement, and `layout:Columns(width, spec)` for responsive columns. Check construction/row Results; column calculation returns count and width directly. Values, menus and callbacks remain with the consumer. See [the form API](API.md#form-layout-and-custom-controls) and [executable example](examples/Consumer.lua).
 
-The font-size slider accepts an exact value with Enter. To keep a live sample visible while scrolling, pass `header={width=44, create=createFontSample}` to `app:Options`. The sample aligns with the top of the title and moves below it on narrow windows. The factory receives a pooled parent, the app and a fresh component scope on each reveal. Bind events to that scope so hidden components stop receiving updates. Its component implements `Refresh()`, `Layout(width)` and `Hide()`. The font sample appears on both pages of the [executable example](examples/Consumer.lua).
+The font-size slider accepts an exact value with Enter. To keep a live sample visible while scrolling, pass `header={width=44, create=createFontSample}` to `app:Options`. The sample aligns with the top of the title and moves below it on narrow windows. The factory receives a pooled parent, the app and a fresh component scope on each reveal. Bind events to that scope so hidden components stop receiving updates. Its component implements `Refresh()`, `Layout(width)` and `Hide()`. The font sample appears on both pages of the [executable example](examples/Consumer.lua). Add `subheader={width=180, create=createProfilePicker}` to keep a compact selector beneath the title as the page scrolls.

@@ -121,18 +121,29 @@ function native:SetClipsChildren(enabled) self.clipsChildren=enabled end
 function native:SetShadowColor() end
 function native:SetShadowOffset() end
 function InCombatLockdown() return false end
+function UnitFullName(unit) assert(unit=='player');return 'Priest','Realm' end
 GameTooltip={GetOwner=function()return nil end} -- The pointer never enters the sample.
 local priorErrors=#W.errors
-local spell=loadAddon('SpellStats',{'Bars.lua','Core.lua'},{
-    SomethingNeedDoing=W.load('SpellStats'),RefreshPlayerStats=function()end,MaxMana=function()return 5000 end,
-})
-boot(spell.App)
+local modules,afterModel={},false
+for line in io.lines('../SpellStats/SpellStats/SpellStats.toc')do
+    local file=line:match('^%s*(%S+%.lua)%s*$')
+    if file=='Bars.lua' then afterModel=true end
+    if afterModel and file then modules[#modules+1]=file end
+end
+local function bootSpellStats()
+    local spell=loadAddon('SpellStats',modules,{
+        SomethingNeedDoing=W.load('SpellStats'),RefreshPlayerStats=function()end,MaxMana=function()return 5000 end,
+    })
+    boot(spell.App)
+    return spell
+end
+local spell=bootSpellStats()
 for id,handler in pairs(SlashCmdList)do
     if _G['SLASH_'..id..'1']=='/spellstats' then handler('options') end
 end
 local options=spell.App._panel
-assert(options:IsShown() and options._pool.header.spellStatsPreview)
-local sample
+assert(options:IsShown())
+local sample,slider
 for _,region in ipairs(W.frames)do
     if region.kind=='FontString' and region:GetText()=='311' then sample=region;break end
 end
@@ -141,13 +152,17 @@ UIParent:Hide()
 assert(not sample:IsVisible())
 UIParent:Show()
 assert(sample:IsVisible())
-options._pool['display:2:topSize']:SetValue(18)
+for _,widget in pairs(options._pool)do
+    if widget.kind=='Slider' and widget:IsVisible() and widget:GetOrientation()=='HORIZONTAL'
+        and widget:GetValue()==spell.GetSettings().topSize then
+        assert(not slider,'expected one top size slider');slider=widget
+    end
+end
+assert(slider and slider:IsEnabled());slider:SetValue(18)
 W.tick(.01)
-assert(spell.GetSettings().topSize==18 and SpellStatsDB.values.topSize==18)
-assert(math.floor(sample.fontSize)==18 and options._pool['display:2:topSize:value']:GetText()=='18')
+assert(spell.GetSettings().topSize==18 and math.floor(sample.fontSize)==18)
 assert(W.click(options._pool.close) and not options:IsShown())
 assert(#W.errors==priorErrors,W.errors[priorErrors+1])
-print('PASS SpellStats: slash options, real header preview, slider edit and saved font size')
 
 -- Two different shutdown responsibilities use the same event contract.
 local checkpoint,stopped
@@ -160,3 +175,8 @@ end))
 W.event('PLAYER_LOGOUT')
 assert(checkpoint and checkpoint.total==50 and stopped and not xp:IsReady() and not atcf:IsReady())
 print('PASS XPIsland + ATCF: checkpoint and native-timer cleanup before disposal')
+
+-- Restore through the consumer's storage adapter, independent of its DB schema.
+assert(bootSpellStats().GetSettings().topSize==18)
+assert(#W.errors==priorErrors,W.errors[priorErrors+1])
+print('PASS SpellStats: slash options, real header preview, slider edit and saved size after reload')

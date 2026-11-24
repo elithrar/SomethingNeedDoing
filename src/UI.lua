@@ -270,6 +270,35 @@ SND._install[#SND._install + 1] = function(app)
         end
         return true
     end
+    -- Keep Blizzard's radio semantics, hit testing and hover. Forever's
+    -- Vanilla/MenuVariants.lua supplies the same left texture on each radio.
+    local function styleRadio(button,description)
+        local mark=button.leftTexture1
+        if mark then
+            mark:SetAtlas(description:IsSelected() and 'common-dropdown-icon-checkmark-yellow-classic-2' or nil)
+            mark:SetSize(20,20)
+        end
+    end
+    function ui:StyleMenu(root)
+        if app._disposed then return false,I.error('unavailable')end
+        I.check(type(root)=='table' and type(root.AddMenuAcquiredCallback)=='function','root menu description required')
+        local theme=resolved()
+        if usesGameArtwork[theme] then
+            local surface=theme.colors.surface
+            root:AddMenuAcquiredCallback(function(menu)
+                -- The compositor releases this fill when the native popup is
+                -- reclaimed. Its border and the rows draw above it.
+                local fill=menu:AttachTexture()
+                fill:SetDrawLayer('BACKGROUND')
+                fill:SetColorTexture(surface[1],surface[2],surface[3],1)
+                fill:SetAllPoints()
+            end)
+            MenuUtil.TraverseMenu(root,function(description)
+                if description:IsRadio() then description:AddInitializer(styleRadio)end
+            end)
+        end
+        return true
+    end
     function ui:Color(object,role)
         I.check(not app._disposed,'appearance service is disposed')
         for _,definition in pairs(definitions)do if not definition.colors[role] then return false,I.error('invalid','Color role must exist in every theme')end end

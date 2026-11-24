@@ -84,7 +84,11 @@ app:OnReady(function()
     toggle:SetSize(20,20);toggle:SetPoint('TOPRIGHT',-4,-4)
     local ok,failure=app.ui:Style(toggle,'checkbox')
     if not ok then app.log:Warn(failure.message)end
-    toggle:SetScript('OnClick',function(self)preview:SetAlpha(self:GetChecked() and .6 or 1)end)
+    local function setDimmed(dim)
+        toggle:SetChecked(dim)
+        preview:SetAlpha(dim and .6 or 1)
+    end
+    toggle:SetScript('OnClick',function(self)setDimmed(self:GetChecked())end)
     local toggleLabel=preview:CreateFontString(nil,'OVERLAY','GameTooltipText')
     toggleLabel:SetText('Dim preview')
     local labelFont,labelError=app.fonts:Apply(toggleLabel,'control')
@@ -100,6 +104,18 @@ app:OnReady(function()
         return {scale=values.scale, tint=values.tint}
     end)
     local owner = app:Scope('example-view')
+    preview:EnableMouse(true)
+    preview:SetScript('OnMouseUp',owner:Guard(function(self,button)
+        if button~='RightButton' then return end
+        MenuUtil.CreateContextMenu(self,function(_,root)
+            local function selected(dim)return (not not toggle:GetChecked())==dim end
+            local choose=owner:Guard(setDimmed)
+            root:CreateRadio('Full opacity',selected,choose,false)
+            root:CreateRadio('Dim preview',selected,choose,true)
+            local ok,err=app.ui:StyleMenu(root)
+            if not ok then app.log:Warn(err.message)end
+        end)
+    end))
     owner:Watch(app:SelectAppearance(function(value)return value end),function()
         local width,height=app.fonts:Measure(label)
         preview:SetSize(math.max(180,width+24),math.max(72,height+52))

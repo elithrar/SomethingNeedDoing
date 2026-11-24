@@ -47,6 +47,7 @@ function CreateFont(name)local f=object('Font');_G[name]=f;return f end
 function methods:CreateTexture()return object('Texture',self)end
 function methods:SetTexture(value)self.texture=value end
 function methods:SetAtlas(asset)self.atlas=asset end
+function methods:SetDrawLayer(layer)self.layer=layer end
 function methods:SetColorTexture(...)self.color={...}end
 function methods:SetVertexColor(...)self.tint={...}end
 function methods:SetAllPoints(other)self.all=other end
@@ -58,6 +59,7 @@ function methods:SetThumbTexture(texture)self.thumb=texture end
 function methods:SetHitRectInsets(...)self.hitInsets={...}end
 function methods:RegisterForClicks(...)self.clickButtons={...}end
 function methods:EnableMouse(value)self.mouseEnabled=value end
+function methods:SetMotionScriptsWhileDisabled(value)self.motionWhileDisabled=value end
 function methods:SetAlpha(value)self.alpha=value end
 function methods:SetOrientation(value)self.orientation=value end
 function methods:GetOrientation()return self.orientation or 'VERTICAL' end
@@ -139,19 +141,59 @@ function methods:SetupMenu(build)
     assert(not self.menuOpen,'regenerated an open native menu');self.buildMenu=build
 end
 function methods:SetDefaultText(text)self.defaultText=text end
+function methods:OverrideText(text)self.Text:SetText(text)end
 function methods:IsMenuOpen()return self.menuOpen end
+function methods:GetMenuDescription()return self.root end
+MenuInputContext={MouseButton=2,MouseWheel=3}
+MenuUtil={}
+function MenuUtil.TraverseMenu(root,visit)
+    for _,row in ipairs(root.rows)do
+        if visit(row) or (row.rows and MenuUtil.TraverseMenu(row,visit)) then return true end
+    end
+    return false
+end
+local function openMenu(owner,build)
+    local root={rows={},acquired={}}
+    function root:SetScrollMode()end
+    function root:AddMenuAcquiredCallback(fn)self.acquired[#self.acquired+1]=fn end
+    function root:AddMenuReleasedCallback(fn)self.release=fn end
+    function root:CreateButton(label,choose,value)
+        local row={label=label,choose=choose,value=value,initializers={}}
+        self.rows[#self.rows+1]=row
+        function row:IsRadio()return self.selected~=nil end
+        function row:IsSelected()return self.selected and self.selected(self.value)end
+        function row:AddInitializer(fn)self.initializers[#self.initializers+1]=fn end
+        return row
+    end
+    function root:CreateRadio(label,selected,choose,value)
+        local row=self:CreateButton(label,choose,value);row.selected=selected;return row
+    end
+    owner.root=root;build(owner,root)
+    local popup=object('Frame')
+    function popup:AttachTexture()return self:CreateTexture()end
+    function popup:Close()
+        if self:IsShown() then self:Hide();if root.release then root.release()end end
+    end
+    root.popup=popup
+    for _,fn in ipairs(root.acquired)do fn(popup)end
+    for _,row in ipairs(root.rows)do
+        local button={fontString=object('FontString'),highlight=object('Texture')}
+        button.highlight:SetTexture('Interface\\QuestFrame\\UI-QuestTitleHighlight')
+        if row:IsRadio() then
+            button.leftTexture1=object('Texture')
+            button.leftTexture1:SetAtlas(row:IsSelected() and 'common-dropdown-icon-radialtick-yellow-classic' or 'common-dropdown-tickradial-classic')
+        end
+        row.button=button
+        for _,fn in ipairs(row.initializers)do fn(button,row,popup)end
+    end
+    return popup
+end
+function MenuUtil.CreateContextMenu(owner,build)return openMenu(owner,build)end
 function methods:OpenMenu()
     self.menuOpen=true
-    local root={rows={}}
-    function root:SetScrollMode()end
-    function root:AddMenuReleasedCallback(fn)self.release=fn end
-    function root:CreateRadio(label,selected,choose,value)
-        local row={choose=choose,value=value,selected=selected};self.rows[#self.rows+1]=row
-        function row:AddInitializer(fn)fn({fontString=object('FontString')})end;return row
-    end
-    self.root=root;self.buildMenu(self,root)
+    return openMenu(self,self.buildMenu)
 end
-function methods:CloseMenu()if self.menuOpen then self.menuOpen=false;if self.root.release then self.root.release()end end end
+function methods:CloseMenu()if self.menuOpen then self.menuOpen=false;self.root.popup:Close()end end
 function methods:IsProtected()return self.protected==true end
 function methods:IsForbidden()return self.forbidden==true end
 function methods:SetClampedToScreen(enabled)self.clampedToScreen=enabled end

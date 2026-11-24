@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.5.10
+# SomethingNeedDoing API — 0.6.0
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on Lua 5.1 and LuaJIT, with pinned consumer-domain checks; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -115,9 +115,13 @@ Change records contain `revision`, `reason` (`set`, `patch`, `switch`, `duplicat
 
 ### Persistence adapter contract
 
-When `adapter` is omitted, exactly one SavedVariables name is required. SND stores `{version=1, active="Default", profiles={Default=values}}`, fills absent declared fields from defaults, and supplies switch, duplicate, copy and reset. Names are unique, 1–48 characters, without leading/trailing whitespace, control characters or pipes; the limit is 32 profiles. Unknown versions are preserved untouched with read-only defaults. Malformed recognized data prevents readiness rather than silently replacing a profile. This default does not bind characters; TOC scope decides which characters share the database.
+When `adapter` is omitted, exactly one SavedVariables name is required. In the default mode SND stores `{version=1, active="Default", profiles={Default=values}}`, fills absent declared fields from defaults, and supplies switch, duplicate, copy and reset. Names are unique, 1–48 characters, without leading/trailing whitespace, control characters or pipes; the limit is 32 profiles. Unknown versions are preserved untouched with read-only defaults. Malformed recognized data prevents readiness rather than silently replacing a profile. This default does not bind characters; TOC scope decides which characters share the database.
 
-An existing add-on must retain or provide a migration adapter for its current database; removing `adapter` does not convert an existing schema. The executable starter uses `ExampleProfiles`, a distinct global from the earlier single-table adapter example. SND reads only declared globals after restoration; the adapter owns legacy schema, recovery and character association. Opaque adapter state must include everything needed to stage future operations: do not read live globals or retain mutable aliases inside `Prepare`.
+Set `characterProfiles = true` to remember each character's active profile in a single account-wide SavedVariables global. Its schema is `{version=1, profiles={Shared=values}, characters={["Name-Realm"]="Shared"}}`. New characters start on Shared. On restore, the active values can be read and writes are locked until the consumer binds a character. Binding an existing character restores their last selection. Switch and Duplicate change only that character’s assignment. Editing or resetting a shared profile updates its values for every character using it.
+
+An optional `initialProfile(fields)` runs when the character-profile global is absent. It receives a copy of the field declarations. Return a values table to seed Shared, nil to use defaults, or `nil, "readOnly"` to preserve an unsupported legacy format and keep writes disabled. Missing fields receive their defaults. An invalid seed fails restoration. A consumer migrating an existing database should declare a **new** account-wide global for this mode and read its old TOC globals only from the initializer. The initializer runs at login until the first successful bind persists the new database. A custom adapter and character-profile mode are mutually exclusive.
+
+An existing add-on that keeps its current database format must retain or provide a migration adapter. The executable starter uses `ExampleProfiles`, a distinct global from the earlier single-table adapter example. SND reads only declared globals after restoration; the adapter owns legacy schema, recovery and character association. Opaque adapter state must include everything needed to stage future operations: do not read live globals or retain mutable aliases inside `Prepare`.
 
 Each declared SavedVariables global has the same plain-data limits on save and restore (32 table levels and 20,000 entries per global). With the default adapter, a missing parent table for a dotted field is created when filling defaults. An existing scalar at that path is malformed data and the original saved profiles are preserved.
 
@@ -230,9 +234,10 @@ app.profiles:Reset()
 | API | Contract |
 | --- | --- |
 | `profiles:List() -> names` | Defensive copy in adapter-supplied display order. |
+| `profiles:Characters(name?) -> names` | Sorted copy of the known character identities assigned to the named profile, or to the active profile when called without a name. Other storage modes return an empty list. |
 | `profiles:Active() -> name or nil` | Current named profile; single-settings adapters may return nil. |
 | `profiles:Capabilities() -> descriptor` | Supported operations and current read-only/identity status. |
-| `profiles:BindCharacter(identity)` | Adapter-defined character association, invoked only when the consumer has a valid identity. |
+| `profiles:BindCharacter(identity)` | Bind a consumer-supplied character identity. The built-in character mode accepts a nonempty string of up to 255 bytes without pipes, control characters or outer whitespace. Custom adapters define their own identity contract. |
 | `profiles:Switch(name)` | Select an existing profile. |
 | `profiles:Duplicate(name)` | Copy the active profile into a new name and activate it. |
 | `profiles:CopyFrom(name)` | Replace active settings from another profile, retaining the active name. |
@@ -240,7 +245,7 @@ app.profiles:Reset()
 
 Mutation methods return `boolean, error`, use the settings transaction path, and reject unsupported operations. Name rules, limits, character assignments, and migrations belong to the adapter. No delete/import/share API is included.
 
-Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, commit, and notify consumers to cancel their stale drag/resize gestures. This includes an already-default reset, equal-value copy, or switch to the active profile. Value-only selectors still notify only when their selection changes; use `OnSettingsChanged` for gesture ownership. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. Built-in dropdown responders also reject changed settings revisions and canceled page scopes; reopen a menu after an external settings change to make a fresh selection.
+Successful profile transitions close owned transient editors, invalidate callbacks bound to the old settings identity, commit, and notify consumers to cancel their stale drag/resize gestures. This includes an already-default reset, equal-value copy, or switch to the active profile. Value-only selectors still notify only when their selection changes; use `OnSettingsChanged` for gesture ownership. Failed validation leaves the current profile and UI intact. Color previews live in an editor overlay; Okay commits once, Cancel discards. Closing or switching profiles cancels unaccepted previews without writing through old profile references. Built-in dropdowns accept clicks from the currently open menu. They discard clicks retained after dismissal, a replacement menu, a settings revision or a canceled page scope. Native wheel and stepper input can select a radio in the current menu description while the popup is closed.
 
 A color control may supply a separate `preview(value)` repaint callback; cancellation sends the original value. `app:Get` and `OnSettingsChanged` remain committed-only. Consumers must not persist values from a preview callback. Editors snapshot the settings revision and reject an outdated commit if another write has replaced their starting state.
 
@@ -286,6 +291,8 @@ Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `col
 
 **Header component.** Set `header = {width = 46, create = createPreview}` on the options declaration to keep a preview visible as the page scrolls. The title and preview share a top edge when they fit side by side. On narrow windows the preview moves below the title. Supply a positive, finite width and the same factory and methods as a custom control. The shell passes the available width to `Layout(width)`. Closing the panel or switching pages ends the header component’s scope and calls `Hide()`. The next activation calls the factory with the pooled parent and a fresh component scope. See the [executable font sample](examples/Consumer.lua).
 
+An optional `subheader = {width = 180, create = createProfilePicker}` places a second component beneath the title. It has the same scoped lifetime and layout contract as the header. With enough room the title and subheader occupy the left column and the header stays at the upper right. On narrow windows SND measures the subheader at the available width and allows the header to move down.
+
 **Editable slider.** Set `editable = true` on a slider to put a numeric text field beside its track. Type in the setting’s stored units and press Enter to save. For a scale of 125%, enter `1.25`. Input must be finite, within the schema’s bounds, and valid for its numeric type. Accepted values follow `step` from the minimum (default step 1) and include the maximum. Escape, focus loss, or an invalid entry restores the saved value. If the settings adapter rejects a drag, the thumb returns to the committed value. Read-only and disabled controls apply to both inputs. Omit `editable` to keep the formatted readout.
 
 Open menus are not regenerated underneath input. Selection/font changes queue menu regeneration until release. Page switches, hiding, and geometry changes close only owned menus, release edit focus, and cancel owned transient editors. Hiding options does not stop unrelated gameplay work.
@@ -304,7 +311,7 @@ Open menus are not regenerated underneath input. Selection/font changes queue me
 | `minColumnWidth` | 220 | Minimum column width before collapsing to fewer columns. |
 | `columnGap` | 16 | Space between section columns. |
 
-Dimensions must be finite and positive; gaps may be zero. Unknown layout options raise at declaration. Sections fill across each row, using its tallest control, then continue downward. Hidden controls consume no cell. Titles span the section. A single column can be narrower than `minColumnWidth` on a small viewport.
+Dimensions must be finite and positive; gaps may be zero. Unknown layout options raise at declaration. By default sections fill across each row, using its tallest control, then continue downward. Set `section.flow = "column"` to fill down each column in declaration order. On a narrow screen those controls form one ordered stack. Hidden controls consume no cell. Titles span the section. A single column can be narrower than `minColumnWidth` on a small viewport.
 
 An input's optional `width` makes it compact within the reserved field column. For example, `{type="color", key="tint", label="Tint", width=36}` keeps a small swatch aligned with neighboring inputs. Buttons accept `width` and `align="start"` (default), `"field"`, or `"stretch"`. A two-column section of stretched buttons forms an action group that stacks when necessary. Checkbox labels are included in their measured hit area. Wrapped labels, hints and action captions contribute to row height; text is never shrunk to fit a row.
 
@@ -350,6 +357,7 @@ local placed, placement = app.layout:PlacePopup(menu, button, {
 | API | Contract |
 | --- | --- |
 | `ui:Style(frame, role) -> ok, errorOrNil` | Register a frame for the active theme using roles: `dialog`, `section`, `button`, `tab`, `input`, `dropdown`, `checkbox`, `slider`, `scrollbar`. Idempotent; preserve caller content and scripts. Controls require `BackdropTemplate`; dropdown also requires `WowStyle1DropdownTemplate`, checkbox a bare `CheckButton`, and slider/scrollbar a bare `Slider`. The control roles own decorative textures and disabled opacity, while callers own labels, values, orientation and geometry. |
+| `ui:StyleMenu(rootDescription) -> ok, errorOrNil` | Call once at the end of your own `DropdownButton:SetupMenu` or `MenuUtil.CreateContextMenu` generator, after creating its choices. The Forever preset adds an opaque popup background and a gold check on selected native radio rows. Menus using other themes keep their native presentation. Generated SND selectors apply this automatically. A disposed app returns `unavailable`. |
 | `ui:Color(object, role) -> ok, errorOrNil` | Register a FontString/EditBox or texture for a named theme color. Reapply on theme changes; explicit product colors remain consumer-owned when unregistered. |
 | `ui:Themes() -> entries` | Defensive sorted `{label, value}` entries for a theme select control. |
 | `ui:Border(frame, kind) -> ok, errorOrNil` | Explicit `default`, `none`, `tooltip`, `dialog`, or `thin` edge; preserve background. These helpers require owned BackdropTemplate frames; they do not alter Blizzard NineSlice artwork. |

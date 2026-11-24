@@ -579,11 +579,29 @@ test('executable consumer settings ownership','the shipped example must restore 
 end)
 
 
+test('character-profile login example','a missing name at restore must bind to Shared when the player enters the world',function()
+    local name='CharacterProfilesExample'
+    local ns={SomethingNeedDoing=W.load(name)}
+    local oldName,oldRealm=UnitName,GetRealmName
+    UnitName=function() return nil end
+    GetRealmName=function() return 'Realm' end
+    assert(loadfile('examples/CharacterProfiles.lua'))(name,ns)
+    W.event('ADDON_LOADED',name)
+    assert(ns.app:IsReady() and ns.app.profiles:Capabilities().needsCharacter and not ExampleCharacterProfiles)
+    UnitName=function() return 'Player' end
+    W.event('PLAYER_ENTERING_WORLD')
+    assert(ExampleCharacterProfiles.characters['Player-Realm']=='Shared')
+    assert(ns.app:Set('showTotals',false) and not ExampleCharacterProfiles.profiles.Shared.showTotals)
+    W.event('PLAYER_LOGOUT')
+    UnitName,GetRealmName,ExampleCharacterProfiles=oldName,oldRealm,nil
+end)
+
 test('default profiles and atomic patches','new addons need safe storage without adapters; related settings must publish once and future saves must survive',function()
     local function fields(name)return {savedVariables={name..'DB'},fields={font={type='font',default='Arial'},fontSize={type='integer',default=13,min=9,max=20},theme={type='enum',default='modern',values={'modern','forever'}},['window.x']={type='number',default=0},['window.y']={type='number',default=0}}}end
     local a=app(fields);local observed={};local scope=a:Scope()
     scope:Watch(a:SelectSettings(function(v)return v.window end),function(v)observed[#observed+1]=v end)
     boot(a);assert(a:IsReady() and a.profiles:Active()=='Default' and #observed==1)
+    assert(not a.profiles:BindCharacter('A-Realm') and #a.profiles:Characters()==0)
     assert(a:SetMany({['window.x']=10,['window.y']=20}));assert(#observed==2 and observed[2].x==10 and observed[2].y==20)
     local db=_G[a.name..'DB'];local ok=a:SetMany({fontSize=100,['window.x']=30});assert(not ok and _G[a.name..'DB']==db and #observed==2)
     assert(a.profiles:Duplicate('Travel'));assert(a:Set('window.x',50));assert(a.profiles:Switch('Default'));assert(a:Get('window.x')==10)
@@ -594,6 +612,127 @@ test('default profiles and atomic patches','new addons need safe storage without
     assert(future:IsReady() and future.profiles:Capabilities().readOnly);assert(not future:Set('font','Game tooltip'));assert(_G[future.name..'DB']==saved)
     local malformed=app(fields);local bad={version=1,active='Default',profiles={Default={font=false}}};_G[malformed.name..'DB']=bad;boot(malformed)
     assert(not malformed:IsReady() and _G[malformed.name..'DB']==bad)
+end)
+
+test('character profile selection','sharing values and selecting profiles are independent across characters and reloads',function()
+    local global='SNDTestCharacterProfiles'
+    local legacy={enabled=false,position={x=17}}
+    legacy.oldPosition=legacy.position
+    local seeds=0
+    local function session()
+        local a=app(function()return {savedVariables={global},characterProfiles=true,
+            initialProfile=function()seeds=seeds+1;return legacy end,
+            fields={enabled={type='boolean',default=true},['position.x']={type='integer',default=0},
+                ['position.y']={type='integer',default=0}}}end)
+        boot(a)
+        return a
+    end
+    local a=session();local profiles=a.profiles
+    local caps=profiles:Capabilities()
+    assert(a:IsReady() and caps.readOnly and caps.needsCharacter and caps.operations.bind and profiles:Active()=='Shared')
+    assert(a:Get('enabled')==false and a:Get('position.x')==17 and a:Get('position.y')==0)
+    assert(not a:SetMany({enabled=true}) and not profiles:Duplicate('Solo') and not profiles:Switch('Shared'))
+    assert(not profiles:BindCharacter(' ') and not profiles:BindCharacter('bad|name') and _G[global]==nil)
+    assert(legacy.position.y==nil and #profiles:Characters()==0 and seeds==1)
+    assert(profiles:BindCharacter('B-Realm') and profiles:BindCharacter('A-Realm'))
+    local seeded=_G[global].profiles.Shared
+    assert(seeded.position~=seeded.oldPosition and seeded.position.y==0 and seeded.oldPosition.y==nil)
+    assert(not profiles:Capabilities().readOnly and not profiles:Capabilities().needsCharacter)
+    local shared=profiles:Characters()
+    assert(table.concat(shared,',')=='A-Realm,B-Realm');shared[1]='different'
+    assert(_G[global].characters['A-Realm']=='Shared' and profiles:Characters()[1]=='A-Realm')
+    assert(profiles:Duplicate('Solo') and a:Get('enabled')==false and a:Get('position.x')==17)
+    assert(not profiles:Duplicate('Solo') and not profiles:Switch('Missing'))
+    assert(a:SetMany({enabled=true,['position.x']=42}) and profiles:Characters()[1]=='A-Realm')
+    assert(profiles:BindCharacter('B-Realm') and profiles:Active()=='Shared' and a:Get('position.x')==17)
+    assert(a:Set('position.x',21) and legacy.position.x==17)
+    assert(profiles:BindCharacter('A-Realm') and profiles:Active()=='Solo' and a:Get('position.x')==42)
+    assert(profiles:CopyFrom('Shared') and a:Get('position.x')==21 and not a:Get('enabled'))
+    assert(profiles:Reset() and a:Get('position.x')==0 and a:Get('enabled'))
+    assert(profiles:Switch('Shared') and a:Get('position.x')==21 and #profiles:Characters('Solo')==0)
+    assert(profiles:Switch('Solo') and profiles:Characters('Shared')[1]=='B-Realm')
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+    local saved=_G[global]
+    local reloaded=session()
+    assert(seeds==1 and _G[global]==saved and reloaded.profiles:Capabilities().needsCharacter)
+    assert(reloaded.profiles:BindCharacter('A-Realm') and reloaded.profiles:Active()=='Solo' and reloaded:Get('enabled'))
+    assert(reloaded.profiles:BindCharacter('B-Realm') and not reloaded:Get('enabled') and reloaded:Get('position.x')==21)
+    assert(table.concat(reloaded.profiles:List(),',')=='Shared,Solo' and #reloaded.profiles:Characters('Unknown')==0)
+end)
+
+test('character profile storage limits','binding and reloading a large Shared profile do not count its active values twice',function()
+    local global='SNDTestFullCharacterDB'
+    local function session()
+        local a=app(function()return {savedVariables={global},characterProfiles=true,fields={flag={type='boolean',default=true}}}end)
+        boot(a);return a
+    end
+    local data={}
+    -- This saved tree has exactly 20,000 entries, including its two profiles and binding.
+    for i=1,19991 do data[i]=i end
+    _G[global]={version=1,characters={A='Solo'},profiles={Shared={flag=false,data=data},Solo={flag=true}}}
+    local a=session()
+    assert(a:IsReady() and not a:Get('flag') and a.profiles:BindCharacter('A') and a:Get('flag'))
+    assert(a.profiles:Switch('Shared') and a:Set('flag',true))
+    local saved=_G[global]
+    assert(not a.profiles:BindCharacter('B') and _G[global]==saved and saved.characters.B==nil)
+    a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
+    local b=session()
+    assert(b:IsReady() and b.profiles:BindCharacter('A') and b:Get('flag'))
+    assert(b:Set('flag',false) and #_G[global].profiles.Shared.data==19991)
+
+    local nested={}
+    local leaf=nested
+    for depth=5,32 do leaf.next={};leaf=leaf.next end -- db -> profiles -> Shared -> nested
+    leaf.keep=false
+    _G[global]={version=1,characters={A='Shared'},profiles={Shared={flag=false,nested=nested}}}
+    local c=session()
+    assert(c:IsReady() and c.profiles:BindCharacter('A') and c:Set('flag',true))
+    leaf=_G[global].profiles.Shared.nested
+    for depth=5,32 do leaf=leaf.next end
+    assert(leaf.keep==false and nested~=_G[global].profiles.Shared.nested)
+end)
+
+test('character profile restoration','future settings and invalid inactive bindings cannot be overwritten by a later bind',function()
+    local function settings(name,seed)
+        return {savedVariables={name..'DB'},characterProfiles=true,initialProfile=seed,fields={flag={type='boolean',default=true}}}
+    end
+    local function restore(saved,seed)
+        local a=app()
+        a:Settings(settings(a.name,seed));_G[a.name..'DB']=saved;boot(a)
+        return a
+    end
+    local function seedMustNotRun()error('seed called for existing database')end
+    for _,db in ipairs({
+        {version=1,characters={},profiles={Other={flag=true}}},
+        {version=1,characters={Other='Missing'},profiles={Shared={flag=false}}},
+        {version=1,characters={['Bad|Identity']='Shared'},profiles={Shared={flag=false}}},
+        {version=1,characters={},profiles={Shared={flag=true},Other={flag=1}}},
+    }) do
+        local a=restore(db,seedMustNotRun)
+        assert(not a:IsReady() and not a.profiles:BindCharacter('A-Realm') and _G[a.name..'DB']==db)
+        assert(a.log:Entries()[1].message:find('Invalid') or a.log:Entries()[1].message:find('Malformed'))
+    end
+    local future={version=99,metadata='keep'}
+    local a=restore(future,seedMustNotRun)
+    local b=restore(nil,function()return nil,'readOnly'end)
+    for _,locked in ipairs({a,b})do
+        local caps=locked.profiles:Capabilities()
+        assert(locked:IsReady() and locked:Get('flag') and caps.readOnly and not caps.needsCharacter)
+        assert(not locked.profiles:BindCharacter('A-Realm') and not locked:Set('flag',false))
+    end
+    assert(_G[a.name..'DB']==future and _G[b.name..'DB']==nil)
+    local malformed=restore(nil,function()return {flag=0}end)
+    assert(not malformed:IsReady() and _G[malformed.name..'DB']==nil)
+    local fresh=restore(nil,nil)
+    assert(fresh.profiles:BindCharacter('A-Realm') and fresh.profiles:Active()=='Shared' and fresh:Get('flag'))
+    local retry=app()
+    local invalid=settings(retry.name)
+    invalid.adapter=examples.CreateSettingsAdapter(retry.name..'DB')
+    assert(not pcall(retry.Settings,retry,invalid))
+    invalid.adapter=nil;invalid.characterProfiles=false;invalid.initialProfile=function()return {}end
+    assert(not pcall(retry.Settings,retry,invalid))
+    invalid.characterProfiles=true;retry:Settings(invalid);boot(retry)
+    assert(retry.profiles:BindCharacter('A-Realm') and retry:Get('flag'))
 end)
 
 test('appearance ownership and custom surfaces','themes must propagate beyond options without mutating definitions, product colors or canceled views',function()
@@ -1130,6 +1269,33 @@ test('public form layout and controls','custom views share measured rows and inp
     W.event('PLAYER_LOGOUT');assert(not a.ui:Control(parent,'new','button'))
 end)
 
+test('column-first options sections','related controls stay together when a multicolumn page narrows or hides a cell',function()
+    local a=app(basic)
+    assert(not pcall(a.Options,a,{pages={{id='p',sections={{flow='diagonal'}}}}}))
+    local controls={}
+    for _,id in ipairs({'a','b','c','d','e'}) do
+        controls[#controls+1]={type='button',id=id,label=id,action=function()end,
+            visible=id=='b' and function(app)return app:Get('enabled')end or nil}
+    end
+    local p=a:Options({width=660,pages={{id='p',sections={{
+        flow='column',layout={columns=3,minColumnWidth=180},controls=controls,
+    }}}}})
+    boot(a);assert(p:Open())
+    local function xy(id)local point=p._pool['p:1:'..id].points;return point[2],point[3]end
+    local ax,ay=xy('a');local bx,by=xy('b');local cx,cy=xy('c');local dx,dy=xy('d');local ex,ey=xy('e')
+    assert(ax==bx and cx==dx and ax<cx and cx<ex and ay==cy and cy==ey and by==dy and by<ay)
+    assert(a:Set('enabled',false))
+    cx,cy=xy('c');dx,dy=xy('d')
+    assert(not p._pool['p:1:b']:IsShown() and cx==ax and cy==by and dx>cx and dy==ay)
+    assert(a:Set('enabled',true))
+    local old=UIParent:GetWidth();UIParent:SetWidth(240);W.event('DISPLAY_SIZE_CHANGED')
+    local last
+    for _,id in ipairs({'a','b','c','d','e'})do
+        local x,y=xy(id);assert(x==ax and (not last or y<last));last=y
+    end
+    UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED');p:Close()
+end)
+
 test('responsive options sections','screen changes collapse fields, columns and navigation without losing controls or font size',function()
     local a=app(basic)
     local panel=a:Options({width=560,pages={
@@ -1264,11 +1430,49 @@ test('equal-value profile replacement','reset/copy/switch must invalidate previe
     a._frame.scripts.OnEvent(a._frame,'PLAYER_LOGOUT')
 end)
 
+-- Forever 94376449, Blizzard_Menu/Vanilla/MenuVariants.lua and Menu.lua:
+-- the popup owns compositor textures and a native radio owns leftTexture1.
+test('Forever popup presentation','only owned menus receive an opaque fill and a single selected check',function()
+    local a,sdk=app()
+    a:Appearance({defaultTheme='forever',themes={forever=sdk.Themes.forever,modern=sdk.Themes.modern}})
+    a:Settings({savedVariables={a.name..'DB'},fields={theme={type='enum',values={'forever','modern'},default='forever'}}})
+    local choices={{label='Forever',value='forever'},{label='Modern',value='modern'}}
+    local panel=a:Options({pages={{id='p',sections={{controls={{type='select',id='theme',key='theme',label='Theme',choices=choices}}}}}}})
+    boot(a);assert(panel:Open())
+    local dropdown=panel._menus['p:1:theme'];dropdown:OpenMenu()
+    local root=dropdown.root
+    local fill=root.popup.children[1]
+    assert(fill and fill.layer=='BACKGROUND' and fill.color[4]==1 and fill.color[1]<.2)
+    local first,second=root.rows[1],root.rows[2]
+    assert(first.button.leftTexture1.atlas=='common-dropdown-icon-checkmark-yellow-classic-2')
+    assert(first.button.leftTexture1.width==20 and second.button.leftTexture1.atlas==nil)
+    assert(first.button.highlight.texture=='Interface\\QuestFrame\\UI-QuestTitleHighlight')
+
+    local foreign=CreateFrame('DropdownButton',nil,UIParent,'WowStyle1DropdownTemplate')
+    foreign:SetupMenu(function(_,menu)menu:CreateRadio('Other',function()return false end,function()end)end)
+    foreign:OpenMenu()
+    assert(#foreign.root.popup.children==0 and foreign.root.rows[1].button.leftTexture1.atlas=='common-dropdown-tickradial-classic')
+    foreign:CloseMenu()
+
+    second.choose(second.value);assert(a:Get('theme')=='modern')
+    dropdown:CloseMenu();W.tick(.01);dropdown:OpenMenu()
+    assert(#dropdown.root.popup.children==0)
+    assert(dropdown.root.rows[2].button.leftTexture1.atlas=='common-dropdown-icon-radialtick-yellow-classic')
+    dropdown:CloseMenu();panel:Close()
+end)
+
 test('dropdown callback identity','native selections retained across profile changes or page reuse cannot edit the new owner',function()
     local a=app(function(name)return {savedVariables={name..'DB'},fields={choice={type='enum',default='a',values={'a','b'}},enabled={type='boolean',default=true}}}end)
     local p=a:Options();boot(a);assert(p:Open())
     local d=p._menus['settings:1:1']
-    local function selectB()d:OpenMenu();local row=d.root.rows[2];return function()row.choose(row.value)end end
+    local function selectB()d:OpenMenu();local row=d.root.rows[2];return function(input)row.choose(row.value,input)end end
+    local dismissed=selectB();d:CloseMenu()
+    dismissed({context=MenuInputContext.MouseButton});assert(a:Get('choice')=='a')
+    local wheel=selectB()
+    dismissed({context=MenuInputContext.MouseButton});dismissed({context=MenuInputContext.MouseWheel})
+    assert(a:Get('choice')=='a','a successor root owns the active selection')
+    d:CloseMenu();wheel({context=MenuInputContext.MouseWheel});assert(a:Get('choice')=='b')
+    assert(a:Set('choice','a'))
     local stale=selectB();assert(a.profiles:Duplicate('Other'));stale();assert(a:Get('choice')=='a')
     stale=selectB();assert(a:Set('enabled',false));stale();assert(a:Get('choice')=='a')
     d:CloseMenu();W.tick(.01)
@@ -1351,6 +1555,30 @@ test('custom control visibility','hidden, failed and superseded controls release
     assert(panel:Open() and host:IsShown() and creates==4)
     W.event('PLAYER_ENTERING_WORLD');assert(events==3)
     assert(panel:Close());assert(not owner.active and hides==3)
+end)
+
+test('options subheader component','a fixed selector sits below the title and stacks clear of the preview and scrolling controls',function()
+    for _,withPreview in ipairs({false,true})do
+        local a=app(basic);local parent,owner,preview
+        local function component(height)return {Refresh=function()end,Hide=function()end,Layout=function()return height end}end
+        local p=a:Options({title='A title',width=440,subheader={width=200,create=function(host,_,scope)
+            assert(not parent or host==parent);parent,owner=host,scope;return component(26)
+        end},header=withPreview and {width=46,create=function(host)preview=host;return component(46)end} or nil,
+            pages={{id='main'}}})
+        boot(a);assert(p:Open());local initial=owner
+        local function check()
+            local bottom=-parent.points[3]+26
+            assert(-parent.points[3]>=16+p._texts.title:GetStringHeight() and parent.points[2]==16)
+            assert(bottom< -p.scroll.anchors.TOPLEFT[3])
+        end
+        check();assert(parent:GetWidth()==200)
+        if preview then assert(preview.points[3]==-16 and preview.points[1]=='TOPRIGHT')end
+        local old=UIParent:GetWidth();UIParent:SetWidth(175);W.event('DISPLAY_SIZE_CHANGED');check()
+        assert(parent:GetWidth()==p.frame:GetWidth()-32)
+        if preview then assert(-preview.points[3]>=-parent.points[3]+26)end
+        UIParent:SetWidth(old);W.event('DISPLAY_SIZE_CHANGED')
+        assert(p:Close() and not initial.active);assert(p:Open() and owner~=initial and owner.active);p:Close()
+    end
 end)
 
 test('options header component','a sample stays clear of the close button and scroll area, updates with settings and reuses its parent when reopened',function()

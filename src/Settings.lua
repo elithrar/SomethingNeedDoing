@@ -33,26 +33,54 @@ local function put(values,path,value)
     return true
 end
 -- Default storage is deliberately small. Existing databases keep their migration adapters.
-local function profileAdapter(global)
+local function profileAdapter(global,characterProfiles,initialProfile)
+    local initialName=characterProfiles and 'Shared' or 'Default'
     local function defaults(fields)
         local values={};for path,field in pairs(fields)do put(values,path,I.copy(field.default))end;return values
     end
-    local function result(db,readOnly)
+    local function result(db,readOnly,identity)
+        local active=db.active
+        if characterProfiles then active=identity and db.characters[identity] or initialName end
+        local waiting=characterProfiles and not identity and not readOnly
+        local locked=readOnly==true or waiting==true
         local names={};for name in pairs(db.profiles)do names[#names+1]=name end;table.sort(names)
-        return {state={values=I.copy(db.profiles[db.active]),activeProfile=db.active,readOnly=readOnly==true,
-            profiles={names=names,operations={switch=true,duplicate=true,copy=true,reset=true}},database=db},
-            saved=not readOnly and {[global]=db} or nil}
+        local operations={switch=true,duplicate=true,copy=true,reset=true}
+        if characterProfiles and not readOnly then operations.bind=true end
+        return {state={values=db.profiles[active],activeProfile=active,identity=identity,needsCharacter=waiting,readOnly=locked,
+            profiles={names=names,operations=operations},database=db},saved=not locked and {[global]=db} or nil}
     end
     local function nameValid(name)
         return type(name)=='string' and #name>0 and #name<=48 and name:match('^%s*(.-)%s*$')==name and not name:find('[%c|]')
     end
+    local function identityValid(identity)
+        return type(identity)=='string' and #identity>0 and #identity<=255
+            and identity:match('^%s*(.-)%s*$')==identity and not identity:find('[%c|]')
+    end
     local adapter={}
     function adapter:Restore(saved,fields)
-        local empty={version=1,active='Default',profiles={Default=defaults(fields)}}
+        local empty={version=1,profiles={[initialName]=defaults(fields)}}
+        if characterProfiles then empty.characters={} else empty.active=initialName end
         local db=saved[global]
-        if db==nil then return true,result(empty)end
+        if db==nil then
+            if not initialProfile then return true,result(empty) end
+            local seed,mode=initialProfile(I.copy(fields))
+            if mode=='readOnly' and seed==nil then return true,result(empty,true) end
+            if mode~=nil or (seed~=nil and not I.plain(seed)) then return false,I.error('invalid','Invalid initial profile') end
+            if seed==nil then return true,result(empty) end
+            db=empty
+            db.profiles[initialName]=I.copy(seed)
+        end
         if not I.plain(db) or db.version~=1 then return true,result(empty,true)end
-        if not I.plain(db.profiles) or not nameValid(db.active) or not I.plain(db.profiles[db.active]) then return false,I.error('invalid','Malformed profile database')end
+        local active=characterProfiles and initialName or db.active
+        if not I.plain(db.profiles) or not nameValid(active) or not I.plain(db.profiles[active]) then return false,I.error('invalid','Malformed profile database')end
+        if characterProfiles then
+            if not I.plain(db.characters) then return false,I.error('invalid','Malformed character bindings') end
+            for character,name in pairs(db.characters) do
+                if not identityValid(character) or not nameValid(name) or not I.plain(db.profiles[name]) then
+                    return false,I.error('invalid','Invalid character binding')
+                end
+            end
+        end
         local count=0
         for name,values in pairs(db.profiles)do
             count=count+1
@@ -68,25 +96,44 @@ local function profileAdapter(global)
     end
     function adapter:Prepare(state,operation,fields)
         local db=state.database;local name=operation.name;local kind=operation.kind
-        if kind=='set' then put(db.profiles[db.active],operation.path,I.copy(operation.value))
-        elseif kind=='patch' then for path,value in pairs(operation.values)do put(db.profiles[db.active],path,I.copy(value))end
-        elseif kind=='reset' then db.profiles[db.active]=defaults(fields)
+        local active,identity,selected=state.activeProfile,state.identity,nil
+        if kind=='bind' and characterProfiles then
+            identity=operation.identity
+            if not identityValid(identity) then return false,I.error('invalid','Provide a valid character identity') end
+            selected=db.characters[identity] or initialName
+        elseif kind=='set' then put(db.profiles[active],operation.path,I.copy(operation.value))
+        elseif kind=='patch' then for path,value in pairs(operation.values)do put(db.profiles[active],path,I.copy(value))end
+        elseif kind=='reset' then db.profiles[active]=defaults(fields)
         elseif kind=='switch' or kind=='copy' then
             if not db.profiles[name] then return false,I.error('notFound','Profile not found')end
-            if kind=='switch' then db.active=name else db.profiles[db.active]=I.copy(db.profiles[name])end
+            if kind=='switch' then selected=name else db.profiles[active]=I.copy(db.profiles[name])end
         elseif kind=='duplicate' then
             if not nameValid(name) then return false,I.error('invalid','Use a profile name of 1–48 characters without control characters or pipes')end
             if db.profiles[name] then return false,I.error('exists','Profile already exists')end
             local count=0;for _ in pairs(db.profiles)do count=count+1 end
             if count>=32 then return false,I.error('limit','Profile limit reached (32)')end
-            db.profiles[name]=I.copy(db.profiles[db.active]);db.active=name
+            db.profiles[name]=I.copy(db.profiles[active]);selected=name
         else return false,I.error('unsupported')end
-        return true,result(db)
+        if selected then
+            if characterProfiles then db.characters[identity]=selected else db.active=selected end
+        end
+        return true,result(db,false,identity)
     end
     return adapter
 end
 SND._install[#SND._install + 1] = function(app)
     local spec, current, store, listeners = nil, nil, nil, {}
+    local function copyState(state)
+        if not spec.defaultProfiles then return I.copy(state) end
+        -- The database is the bounded saved tree. The active values are a view
+        -- of one of its profiles, not a second tree added to its entry/depth limit.
+        local result={}
+        for key,value in pairs(state) do
+            if key~='values' then result[key]=I.copy(value) end
+        end
+        result.values=result.database.profiles[result.activeProfile]
+        return result
+    end
     local function validate(state)
         I.check(type(state) == 'table' and type(state.values) == 'table', 'adapter must supply values')
         I.check(state.needsCharacter == nil or type(state.needsCharacter) == 'boolean', 'invalid needsCharacter')
@@ -103,7 +150,7 @@ SND._install[#SND._install + 1] = function(app)
         end
         I.check(state.readOnly == nil or type(state.readOnly) == 'boolean', 'invalid readOnly')
         for path, field in pairs(spec.fields) do I.check(fieldValid(I.get(state.values, path), field), 'invalid field: ' .. path) end
-        return I.copy(state)
+        return copyState(state)
     end
     local function savedCopy(saved)
         I.check(type(saved) == 'table', 'adapter must supply saved globals')
@@ -122,13 +169,19 @@ SND._install[#SND._install + 1] = function(app)
         I.check(not spec and not self._ready and not self._disposed, 'declare settings once before readiness')
         I.check(I.plain(declaration), 'settings declaration must be a plain table')
         declaration=I.definition(declaration)
-        if declaration.adapter==nil then
+        I.check(declaration.characterProfiles==nil or type(declaration.characterProfiles)=='boolean','characterProfiles must be a boolean')
+        I.check(not declaration.characterProfiles or declaration.adapter==nil,'characterProfiles requires default profile storage')
+        I.check(declaration.initialProfile==nil or (declaration.characterProfiles and type(declaration.initialProfile)=='function'),
+            'initialProfile requires characterProfiles and a seed function')
+        local defaultProfiles=declaration.adapter==nil
+        if defaultProfiles then
             I.check(I.array(declaration.savedVariables,'savedVariables',true)==1,'default profiles require one saved global')
-            declaration.adapter=profileAdapter(declaration.savedVariables[1])
+            declaration.adapter=profileAdapter(declaration.savedVariables[1],declaration.characterProfiles,declaration.initialProfile)
         end
         I.check(I.plain(declaration.adapter), 'settings adapter must be a plain table')
         I.check(type(declaration.adapter.Restore)=='function' and type(declaration.adapter.Prepare)=='function', 'settings adapter requires Restore and Prepare')
-        local candidate = { adapter=I.definition(declaration.adapter), fields=I.copy(declaration.fields), savedVariables=I.copy(declaration.savedVariables) }
+        local candidate = { adapter=I.definition(declaration.adapter), fields=I.copy(declaration.fields), savedVariables=I.copy(declaration.savedVariables),
+            defaultProfiles=defaultProfiles, characterProfiles=declaration.characterProfiles }
         I.check(I.plain(candidate.fields), 'fields must be a plain table')
         I.array(candidate.savedVariables, 'savedVariables', true)
         local names = {}
@@ -181,7 +234,7 @@ SND._install[#SND._install + 1] = function(app)
         if expectedRevision ~= nil and expectedRevision ~= store._revision then return false, I.error('stale') end
         if current.readOnly and not (operation.kind == 'bind' and current.needsCharacter) then return false, I.error('readOnly') end
         local ok, candidate, failure = I.lock(app, function()
-            local accepted, prepared = spec.adapter:Prepare(I.copy(current), I.copy(operation), I.copy(spec.fields))
+            local accepted, prepared = spec.adapter:Prepare(copyState(current), I.copy(operation), I.copy(spec.fields))
             I.check(type(accepted)=='boolean', 'Prepare must return a Result tuple')
             if not accepted then return nil, prepared end
             I.check(I.plain(prepared), 'Prepare result must contain state and saved')
@@ -235,6 +288,18 @@ SND._install[#SND._install + 1] = function(app)
     local profiles = {}; app.profiles = profiles
     function profiles:List() return current and I.copy((current.profiles or {}).names or {}) or {} end
     function profiles:Active() return current and current.activeProfile end
+    function profiles:Characters(name)
+        I.check(name==nil or (type(name)=='string' and name~=''),'profile name must be a nonempty string')
+        local names={}
+        if current and spec.characterProfiles then
+            name=name or current.activeProfile
+            for character,assigned in pairs(current.database.characters) do
+                if assigned==name then names[#names+1]=character end
+            end
+            table.sort(names)
+        end
+        return names
+    end
     function profiles:Capabilities()
         local result = current and I.copy(current.profiles or {}) or {}
         result.readOnly = not current or current.readOnly == true; result.needsCharacter = current and current.needsCharacter == true or false
