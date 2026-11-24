@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.8
+
+### Public API changes
+
+**No public API changes.**
+
+### Internal improvements
+
+- Top-align the options title and header preview so a tall preview keeps the title at its usual inset. The preview moves below the title when space is tight.
+
 ## 0.5.7
 
 ### Public API changes

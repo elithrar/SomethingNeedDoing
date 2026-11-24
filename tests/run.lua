@@ -1005,16 +1005,22 @@ test('options header component','a sample stays clear of the close button and sc
     end}})
     boot(a);assert(panel:Open() and last and host:GetParent()==panel.frame)
     assert(host.points[1]=='TOPRIGHT' and -host.points[2]>panel._pool.close:GetWidth())
+    local function checkTitle()
+        local point=panel._texts.title.anchors.TOPLEFT
+        assert(point[2]==16 and point[3]==-16,'a tall preview must not move the title down')
+        assert(host.points[3]<=point[3],'the preview must not start above the title')
+    end
     local function aboveBody()
         assert(-host.points[3]+host:GetHeight() <= -panel.scroll.anchors.TOPLEFT[3])
     end
-    aboveBody()
+    checkTitle();aboveBody()
     assert(a:Set('enabled',false) and last==false)
     local originalWidth=UIParent:GetWidth()
     UIParent:SetWidth(176);W.event('DISPLAY_SIZE_CHANGED')
     assert(-host.points[3]>=16+panel._texts.title:GetStringHeight(),'narrow title and preview have separate rows')
-    aboveBody()
+    checkTitle();aboveBody()
     UIParent:SetWidth(originalWidth);W.event('DISPLAY_SIZE_CHANGED')
+    checkTitle();aboveBody()
     local count=#W.frames
     panel:Close();assert(hides==1 and not owner.active)
     assert(a:Set('enabled',true) and last==false)

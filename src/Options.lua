@@ -564,16 +564,12 @@ SND._install[#SND._install + 1] = function(app)
             host:ClearAllPoints()
             if beside>=math.min(120,captionWidth) then
                 title:SetWidth(beside)
-                local titleHeight=title:GetStringHeight()
-                local rowHeight=math.max(titleHeight,height)
-                title:ClearAllPoints()
-                title:SetPoint('TOPLEFT',16,-12-(rowHeight-titleHeight)/2)
-                host:SetPoint('TOPRIGHT',-rightInset,-12-(rowHeight-height)/2)
+                local rowHeight=math.max(title:GetStringHeight(),height)
+                host:SetPoint('TOPRIGHT',-rightInset,-16)
                 return math.max(close:GetHeight()+24,24+rowHeight)
             end
             -- Put the preview below the title when the close control and
             -- preview would otherwise squeeze the caption into a few letters.
-            title:ClearAllPoints();title:SetPoint('TOPLEFT',16,-16)
             host:SetPoint('TOPRIGHT',-16,-headerBottom)
             return headerBottom+height+12
         end

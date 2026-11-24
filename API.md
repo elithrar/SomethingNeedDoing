@@ -1,4 +1,4 @@
-# SomethingNeedDoing API — 0.5.7
+# SomethingNeedDoing API — 0.5.8
 
 The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on Lua 5.1 and LuaJIT, with pinned consumer-domain checks; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
@@ -278,7 +278,7 @@ Initial controls: `checkbox`, `slider`, `number`, `text`, `select`, `font`, `col
 
 Custom escape hatch: `{ type = "custom", id = "preview", create = function(parent, app, scope) ... end }`. The factory returns a component with `Refresh()`, `Layout(width) -> height`, and `Hide()` methods. Height must be finite and nonnegative. Its supplied parent is a pooled container positioned in the section; it creates children only under that container and owns callbacks through its supplied scope. Failed construction must be retry-safe; named components are reused, not rebuilt on every refresh.
 
-**Header component.** Set `header = {width = 46, create = createPreview}` on the options declaration to keep a preview beside the title as the page scrolls. Supply a positive, finite width and the same factory and methods as a custom control. The shell passes the available width to `Layout(width)` and places the component below the title when the row is too narrow. Closing the panel or switching pages calls `Hide()` and cancels the view scope. The next activation calls the factory with the pooled parent and a fresh scope. See the [executable font sample](examples/Consumer.lua).
+**Header component.** Set `header = {width = 46, create = createPreview}` on the options declaration to keep a preview visible as the page scrolls. The title and preview share a top edge when they fit side by side. On narrow windows the preview moves below the title. Supply a positive, finite width and the same factory and methods as a custom control. The shell passes the available width to `Layout(width)`. Closing the panel or switching pages calls `Hide()` and cancels the view scope. The next activation calls the factory with the pooled parent and a fresh scope. See the [executable font sample](examples/Consumer.lua).
 
 **Editable slider.** Set `editable = true` on a slider to put a numeric text field beside its track. Type in the setting’s stored units and press Enter to save. For a scale of 125%, enter `1.25`. Input must be finite, within the schema’s bounds, and valid for its numeric type. Accepted values follow `step` from the minimum (default step 1) and include the maximum. Escape, focus loss, or an invalid entry restores the saved value. Read-only and disabled controls apply to both inputs. Omit `editable` to keep the formatted readout.
 
