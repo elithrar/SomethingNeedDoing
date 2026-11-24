@@ -152,17 +152,26 @@ Options reflow fields, section columns and tabs at the available width, preservi
 
 ## Testing
 
-With Lua 5.1 and Python 3 installed, run from the SND directory:
+CI and local checks use upstream PUC Lua 5.1.4 and Python 3. To build the
+interpreter and compiler locally, unpack the official source archive, run
+`make generic` in its directory, and put its `src` directory first on
+`PATH`. [Lua 5.1.4 source](https://www.lua.org/ftp/lua-5.1.4.tar.gz)
+
+From the SND directory, check that both version commands print `Lua 5.1.4`,
+then run the syntax and contract checks.
 
 ```sh
+lua -v
+luac -v
 python3 tools/check.py
-lua5.1 tests/run.lua
+find src tests examples -name '*.lua' -exec luac -p {} +
+lua tests/run.lua
 ```
 
-CI runs the contracts on both Lua 5.1 and LuaJIT. Consumer checks exercise
+Consumer checks exercise
 pinned XPIsland, FindAnUpgrade and AsTheCrowFlies modules and open SpellStats
 options through its slash command. With those four repositories checked out
-as siblings, run `lua5.1 tests/consumers.lua` locally.
+as siblings, run `lua tests/consumers.lua` locally.
 These are offline logic/lifecycle checks; native rendering, input, combat/taint
 and in-game performance still need the Forever client.
 

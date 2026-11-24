@@ -32,7 +32,7 @@ Paths below are relative to the SND source root. Prefer the full pinned source t
 ## API and ownership
 
 - When extending SND, first check whether existing events, scopes, Results, selectors or custom components solve the requested behavior. Add API only when it makes the implementation clearer. Keep gameplay clocks, queries, route graphs, native integration policy and checkpoint policy in consumers.
-- Keep Lua 5.1, the declared client target and the consuming TOC namespace. No process-wide “latest version wins” registry or dependence on another installed add-on.
+- Target WoW Forever's Lua 5.1.4 and keep the consuming TOC namespace. No process-wide “latest version wins” registry or dependence on another installed add-on.
 - State follows `Update → Select → Watch`: small plain snapshots, pure selectors and scope-owned observers. Cancel hidden views and create a fresh scope on reopening. Preserve consumer request generations for asynchronous identity.
 - Settings have one owner: declare settings before readiness; omit the adapter for new databases or supply a legacy adapter, mutate through `app:Set`, `app:SetMany` or profile commands and observe with `SelectSettings`. Never mirror a live profile into a second writable store. Transfer every write path together, including previews, drag commits and profile replacement. TOCs determine account/character persistence. The optional character-profile store uses one account global and an explicit identity bind. A consumer seeding it from an older schema uses a fresh global and owns migration of its old values.
 - Fallible operations return `true, value` or `false, {code, message}`; successful commands return `true, nil`. Declaration-only methods such as Settings and Appearance return no value. Check the boolean. Programmer errors raise. Transaction callback exceptions return failed Results without publishing; notification callback exceptions are reported without rolling back a successful commit. See API.md for callback-specific contracts. Validate ordinary user input at the UI boundary before calling programmer-checked commands. Recovery guards must clear after native failures so the next interaction can retry. Never format arbitrary error objects. Validate dense arrays and copy declarations before installing them.
@@ -53,7 +53,7 @@ Paths below are relative to the SND source root. Prefer the full pinned source t
 
 ## Verification
 
-For consumer changes, run the add-on’s checks and exercise the affected integration. For SND changes, follow the framework checks below.
+For consumer changes, run the add-on’s checks and exercise the affected integration. For SND changes, use upstream PUC Lua 5.1.4 for both `lua` and `luac`, as described in the README.
 
 Run the SND README commands. Add only the smallest regression that protects a real failure boundary, with its reason beside the test. Exercise the original entry point and recovery: after a native failure, restore the boundary and verify the next action updates actual text, geometry or committed state, not merely that `Open()` succeeds. Cover relevant hide/reopen, profile replacement and late-font transitions; use `tests/run.lua` for existing failure-injection patterns. Rerun optional consumer checks for state, settings, scope or component changes when sibling sources exist; otherwise report the missing evidence.
 

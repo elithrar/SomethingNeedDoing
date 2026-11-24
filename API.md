@@ -1,12 +1,12 @@
 # SomethingNeedDoing API — 0.6.0
 
-The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on Lua 5.1 and LuaJIT, with pinned consumer-domain checks; native-client acceptance remains outstanding. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
+The runtime lives in `src/` and loads through `Embed.xml`. Offline contracts run on upstream PUC Lua 5.1.4 and include pinned consumer-domain checks. See [README.md](README.md) for installation and [the executable consumer example](examples/Consumer.lua).
 
 SND supplies registration, small reactive state, settings bindings, consistent options panels, window chrome, fonts, screen geometry, owned callbacks, and diagnostics. Add-ons retain gameplay models, API-specific interpretation, persistence migrations, and product behavior.
 
 ## 1. Packaging and instance ownership
 
-The supported implementation target is **WoW Forever, interface 16001, Lua 5.1**. Retail or other clients require explicit adapters and native-contract tests; a familiar API name does not establish compatibility.
+The supported implementation target is **WoW Forever, interface 16001**. The Windows executable for build 1.60.1.71037 identifies its Lua version as 5.1.4. Other clients require explicit adapters and native-contract tests. [Blizzard build configuration](https://us.cdn.blizzard.com/tpr/wow/config/0a/ca/0acab1e6aa41b46165d2ca66853b417b)
 
 Bundle a pinned copy under each consuming add-on, loaded before that add-on's modules through its TOC. The bootstrap exports a factory into the TOC namespace. It does not register a standalone add-on, shared SavedVariables, or a global singleton.
 
@@ -479,7 +479,7 @@ This diagnostic service is **new work**: the current add-ons have messages and s
 
 ## 9. Verification and remaining integration gates
 
-The [focused contract tests](tests/run.lua) run on Lua 5.1 and LuaJIT in CI. The [consumer checks](tests/consumers.lua) load pinned modules from XPIsland, FindAnUpgrade and AsTheCrowFlies. They also boot SpellStats with SND, open its options from chat and change the font size on its spell preview. Frames and player inputs use offline fixtures.
+The [focused contract tests](tests/run.lua) and [consumer checks](tests/consumers.lua) run on the same PUC Lua 5.1.4 interpreter in CI. The consumer checks load pinned modules from XPIsland, FindAnUpgrade and AsTheCrowFlies. They also boot SpellStats with SND, open its options from chat and change the font size on its spell preview. Frames and player inputs use offline fixtures.
 
 Before a consumer release, run its existing semantic/migration tests and verify native rendering, menu/picker input, screen sizes/scales, combat restrictions and mixed-version coexistence in the target client. No offline fixture establishes those engine properties. Keep packaging inputs pinned to an exact SND revision.
 

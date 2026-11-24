@@ -5,23 +5,6 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        lua: [lua5.1, luajit]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Lua runtimes
-        run: sudo apt-get update && sudo apt-get install -y lua5.1 luajit
-      - name: Check metadata and documentation
-        run: python3 tools/check.py
-      - name: Compile Lua sources
-        run: find src tests examples -name '*.lua' -exec luac5.1 -p {} +
-      - name: Run focused contracts
-        run: ${{ matrix.lua }} tests/run.lua
-  consumer-contracts:
-    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: SomethingNeedDoing
@@ -30,6 +13,20 @@ jobs:
         with:
           path: SomethingNeedDoing
           persist-credentials: false
+      - name: Install PUC Lua 5.1.4
+        uses: leafo/gh-actions-lua@32909a2dea0a48c433aec79e7fcd31b4cd55800f # v13.1.0
+        with:
+          luaVersion: '5.1.4'
+      - name: Check metadata and documentation
+        run: python3 tools/check.py
+      - name: Compile Lua sources
+        run: |
+          luac -v
+          find src tests examples -name '*.lua' -exec luac -p {} +
+      - name: Run focused contracts
+        run: |
+          lua -v
+          lua tests/run.lua
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: elithrar/XPIsland
@@ -54,7 +51,5 @@ jobs:
           ref: 0f342e6e6658faccb0ea27a41ce8ce98b82cb739
           path: SpellStats
           persist-credentials: false
-      - name: Install Lua 5.1
-        run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Exercise pinned consumer domain modules
-        run: lua5.1 tests/consumers.lua
+        run: lua tests/consumers.lua
